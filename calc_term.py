@@ -552,10 +552,11 @@ class Parser:
 class HistoryEntry:
     source: str
     result: str
+    is_error: bool = False
 
     @property
     def line(self):
-        return f"{self.source} = {self.result}"
+        return f"{self.source} = {'Error: ' if self.is_error else ''}{self.result}"
 
 
 class Calculator:
@@ -600,6 +601,15 @@ class Calculator:
 
     def evaluate(self, text, record=True):
         source = text.strip()
+        try:
+            return self._evaluate(source, record)
+        except CalcError as exc:
+            if record and source:
+                # Keep invalid input verbatim, including malformed numeric literals.
+                self.history.append(HistoryEntry(source, str(exc), is_error=True))
+            raise
+
+    def _evaluate(self, source, record):
         text = normalize_input(source)
         if not text:
             raise CalcError("Enter an expression.")
@@ -638,11 +648,13 @@ class Calculator:
         else:
             value = self.parse(text)
         value.checked()
+        # Finish preparing history before committing the result to ans or a variable.
+        entry = HistoryEntry(decimal_literals(source, self.registry), self.format(value)) if record else None
         if assignment:
             self.variables[assignment] = value
         self.answer = value
-        if record:
-            self.history.append(HistoryEntry(decimal_literals(source, self.registry), self.format(value)))
+        if entry is not None:
+            self.history.append(entry)
         return value
 
     def calculate(self, text):
@@ -908,7 +920,9 @@ class ConsoleApp:
                     for key in ("source", "result")
                 ):
                     raise CalcError("Each history entry needs source and result strings.")
-                entries.append(HistoryEntry(item["source"], item["result"]))
+                if not isinstance(item.get("is_error", False), bool):
+                    raise CalcError("History is_error must be true or false.")
+                entries.append(HistoryEntry(item["source"], item["result"], item.get("is_error", False)))
             # Keep all saved entries until the first frame applies the terminal's limit.
             self.calculator.history = deque(entries, maxlen=max(30, len(entries)))
             self._saved_history = tuple(entries)
@@ -924,7 +938,8 @@ class ConsoleApp:
             return True
         temporary = self.history_path.with_name(self.history_path.name + ".tmp")
         try:
-            data = [{"source": entry.source, "result": entry.result} for entry in entries]
+            data = [{"source": entry.source, "result": entry.result,
+                     **({"is_error": True} if entry.is_error else {})} for entry in entries]
             temporary.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
             temporary.replace(self.history_path)
         except OSError as exc:
@@ -1002,19 +1017,22 @@ class ConsoleApp:
         if self.history_index is None:
             if direction < 0:
                 self.history_index = len(history) - 1
-                self.history_part = self.history_insert
+                self.history_part = "expression" if history[-1].is_error else self.history_insert
             return
         if page:
             index = self.history_index + direction * self.history_rows
             self.history_index = max(0, index) if index < len(history) else None
+            if self.history_index is not None and history[self.history_index].is_error:
+                self.history_part = "expression"
             return
         # Reading order is expression, result; Up traverses that order backwards.
-        position = max(0, 2 * self.history_index + (self.history_part == "result") + direction)
-        if position >= 2 * len(history):
+        parts = [(i, part) for i, entry in enumerate(history)
+                 for part in (("expression",) if entry.is_error else ("expression", "result"))]
+        position = max(0, parts.index((self.history_index, self.history_part)) + direction)
+        if position >= len(parts):
             self.history_index = None
         else:
-            self.history_index = position // 2
-            self.history_part = "result" if position % 2 else "expression"
+            self.history_index, self.history_part = parts[position]
 
     def menu_items(self):
         if self.open_menu is None:
@@ -1114,6 +1132,8 @@ class ConsoleApp:
             self.history_index = None
         except (CalcError, OSError) as exc:
             self.message = "Error: " + str(exc)
+            self.history_index = None
+            self.save_history()
 
     def handle_key(self, key):
         if key in ("CTRL_C", "CTRL_D"):
@@ -1535,6 +1555,8 @@ def main(argv=None):
             except CalcError as exc:
                 print("Error: " + str(exc), file=sys.stderr)
                 status = 1
+                if not app.save_history():
+                    print(app.message, file=sys.stderr)
         return status
     if options.plain or not (sys.stdin.isatty() and sys.stdout.isatty()):
         if sys.stdin.isatty():

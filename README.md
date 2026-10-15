@@ -50,13 +50,15 @@ F4 includes ε, μ, Ω, π, other Greek letters, °, Å, and
 arrows. Selection inserts the symbol at the input cursor. Terminal size must be at
 least 40 columns by 12 rows.
 
-The history limit is **at least 30 successful calculations**, increasing to the
+The history limit is **at least 30 calculations, including errors**, increasing to the
 number of visible history rows in taller terminals. The panel fills the space
 between the menu and input line. Resizing the terminal updates the panel immediately,
 with the input, status, and message bars at the bottom. The status bar shows the
 current limit. Shrinking the terminal keeps the latest entries up to the new limit.
-Selecting an older entry scrolls the visible history. Errors keep the input for
-correction and leave history and assignments intact. Up first highlights the newest
+Selecting an older entry scrolls the visible history. Failed calculations appear as
+`1/0 = Error: Division by zero.` and keep the input for correction. Errors leave
+assignments and `ans` intact. Only the expression is selectable in error entries,
+so Enter recalls the bad input for editing. Up first highlights the newest
 result, then its expression, then the previous result and expression, continuing
 through history. For `5+3 = 8`, the first Up selects `8` and the second selects `5+3`.
 Down reverses this order and returns to input after the newest result. Only the
@@ -66,7 +68,7 @@ long expressions scroll into view. PageUp/PageDown jump one visible page of entr
 remain selectable with Up/Down. Composite recalled
 results are enclosed in parentheses to preserve arithmetic precedence.
 
-History saves automatically after each successful calculation and restores on startup,
+History saves automatically after each calculation, including errors, and restores on startup,
 including in `--plain` and `--eval` modes. It is stored separately from settings in
 `calc_term_config.history.json` beside the script; `--config my_settings.json` uses
 `my_settings.history.json` beside that settings file. No `:save` is needed for history.
@@ -100,7 +102,9 @@ subs(y^2+1,y,3)         = 10
 names are case-insensitive, including Greek letters. `_µs` and `_μs` are equivalent.
 Use `_gm` for grams, `_hr` for hours, and `_°K` for Kelvin; `_g`, `_h`, and `_k`
 are physical constants. The built-in names `pi`/`π`, `e`/`E`, `i`/`I`, `ans`, and
-function names are reserved. `ans` holds the last successful result.
+function names are reserved. `ans` holds the latest successful result in the current
+session: after `2+3`, `ans*4` gives `20`, then `ans+1` gives `21`. Failed input and
+`:clear` leave `ans` unchanged. It starts at `0` when the app opens.
 
 Unassigned variables stay symbolic. Assignments use the values available when the
 expression is entered; they are not reactive formulas. Use `:unset x` to make an

@@ -89,21 +89,26 @@ class ConsoleTests(unittest.TestCase):
         self.assertEqual(len(reopened.calculator.history), 30)
         self.assertEqual(reopened.calculator.history[0].source, "20")
 
-    def test_failed_calculation_and_settings_changes_leave_saved_history_intact(self):
+    def test_failed_calculation_is_saved_and_settings_leave_history_intact(self):
         self.type_keys("5+3")
         self.app.handle_key("ENTER")
-        before = self.app.history_path.read_bytes()
         self.type_keys("1/0")
         self.app.handle_key("ENTER")
+        before = self.app.history_path.read_bytes()
         self.app.command(":mode degree")
         self.assertEqual(self.app.history_path.read_bytes(), before)
         self.assertFalse(self.config_path.exists())
         self.assertEqual(self.app.text, "1/0")
+        restored = ConsoleApp(config_path=self.config_path)
+        self.assertEqual(list(restored.calculator.history), list(self.app.calculator.history))
+        self.assertEqual(restored.calculator.history[-1].line, "1/0 = Error: Division by zero.")
+        self.assertTrue(restored.calculator.history[-1].is_error)
 
     def test_bad_history_file_is_preserved_on_startup_and_exit(self):
         invalid = ["not json", "{}", '[{"source":"1","result":"1"},{}]',
                    '[{"source":1,"result":"1"}]', '[{"source":"1","result":null}]',
-                   '[{"source":"","result":"1"}]']
+                   '[{"source":"","result":"1"}]',
+                   '[{"source":"1","result":"1","is_error":"false"}]']
         for data in invalid:
             with self.subTest(data=data):
                 self.app.history_path.write_text(data, encoding="utf-8")
@@ -663,7 +668,53 @@ class ConsoleTests(unittest.TestCase):
         self.app.handle_key("ENTER")
         self.assertEqual(self.app.text, "1/0")
         self.assertIn("Error:", self.app.message)
-        self.assertFalse(self.app.calculator.history)
+        self.assertEqual(self.app.calculator.history[-1].line, "1/0 = Error: Division by zero.")
+        self.assertIn("1/0 = Error: Division by zero.", "\n".join(self.app.frame()[0]))
+
+    def test_history_navigation_skips_error_messages_and_recalls_bad_input(self):
+        for text in ("5+3", "0hG", "(1+", "2+2"):
+            self.app.text, self.app.cursor = text, len(text)
+            self.app.submit()
+        expected = ["4", "2+2", "(1+", "0hG", "8", "5+3"]
+        for part in expected:
+            self.app.handle_key("UP")
+            self.assertEqual(self.highlighted_text(), part)
+        for part in reversed(expected[:-1]):
+            self.app.handle_key("DOWN")
+            self.assertEqual(self.highlighted_text(), part)
+        self.app.handle_key("DOWN")
+        self.assertIsNone(self.app.history_index)
+        self.app.text, self.app.cursor = "", 0
+        self.app.handle_key("UP")
+        self.app.handle_key("UP")
+        self.app.handle_key("UP")
+        self.app.handle_key("ENTER")
+        self.assertEqual(self.app.text, "(1+")
+
+    def test_error_recall_after_restart_and_page_navigation(self):
+        for i in range(7):
+            self.app.calculator.evaluate(str(i))
+        self.app.text = "1/0"
+        self.app.submit()
+        self.app = ConsoleApp(config_path=self.config_path)
+        self.app.text, self.app.cursor = "", 0
+        self.app.frame(height=12)
+        self.app.handle_key("UP")
+        self.assertEqual(self.highlighted_text(height=12), "1/0")
+        self.app.handle_key("PAGEUP")
+        self.app.handle_key("DOWN")
+        self.assertEqual(self.app.history_part, "result")
+        self.app.handle_key("PAGEDOWN")
+        self.assertEqual(self.highlighted_text(height=12), "1/0")
+        self.app.handle_key("ENTER")
+        self.assertEqual(self.app.text, "1/0")
+
+    def test_errors_and_commands_preserve_latest_ans(self):
+        for text in ("1/3", "1/0", ":clear", ":mode degree", "ans*3"):
+            self.app.text, self.app.cursor = text, len(text)
+            self.app.submit()
+        self.assertEqual(self.app.calculator.history[-1].line, "ans*3 = 1")
+        self.assertEqual(self.app.calculator.answer.value, 1)
 
     def test_options_select_exact_and_approximate_output(self):
         for label, mode, expected in (("Approximate output", "approximate", "0.33333"),
@@ -914,6 +965,32 @@ class CommandLineTests(unittest.TestCase):
             status = main(["--config", str(Path(directory) / "missing.json"), "--eval", "1/0"])
             self.assertEqual(status, 1)
             self.assertIn("Division by zero", error.getvalue())
+
+    def test_eval_saves_errors_and_keeps_ans_for_following_calculations(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "settings.json"
+            with patch("sys.stdout", new_callable=io.StringIO) as output, \
+                    patch("sys.stderr", new_callable=io.StringIO) as error:
+                status = main(["--config", str(config), "--eval", "1/3", "--eval", "1/0",
+                               "--eval", "ans*3", "--eval", "0hG"])
+            self.assertEqual(status, 1)
+            self.assertIn("ans*3 = 1", output.getvalue())
+            self.assertIn("Invalid digits", error.getvalue())
+            restored = ConsoleApp(config_path=config)
+            self.assertEqual([entry.is_error for entry in restored.calculator.history],
+                             [False, True, False, True])
+            self.assertEqual(restored.calculator.history[-1].source, "0hG")
+
+    def test_plain_mode_saves_bad_input(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "settings.json"
+            with patch("sys.stdin", io.StringIO("1+\n1/3\n1/0\nans*3\n")), \
+                    patch("sys.stdout", new_callable=io.StringIO) as output:
+                self.assertEqual(main(["--config", str(config), "--plain"]), 0)
+            self.assertIn("ans*3 = 1", output.getvalue())
+            restored = ConsoleApp(config_path=config)
+            self.assertEqual([entry.is_error for entry in restored.calculator.history],
+                             [True, False, True, False])
 
     def test_plain_mode_processes_lines_and_commands(self):
         text = "3->x\n4*x\n:mode degree\nsin(30)\n:quit\n99\n"

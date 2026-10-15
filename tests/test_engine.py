@@ -58,7 +58,8 @@ class ExactArithmeticTests(unittest.TestCase):
                        "1e_3", "1e3_", "1/1__000", "1_000->x1_000"]:
             with self.subTest(source=source), self.assertRaises(CalcError):
                 self.calc.evaluate(source)
-        self.assertFalse(self.calc.history)
+            self.assertEqual(self.calc.history[-1].source, source)
+            self.assertTrue(self.calc.history[-1].is_error)
 
     def test_binary_octal_and_hexadecimal_literals(self):
         for source, expected in {"0b1010": "10", "0o17": "15", "0h3FA2": "16290",
@@ -98,7 +99,8 @@ class ExactArithmeticTests(unittest.TestCase):
             with self.subTest(source=source), self.assertRaises(CalcError):
                 self.calc.evaluate(source)
         self.assertEqual(self.calc.calculate("x"), "3")
-        self.assertEqual(len(self.calc.history), 2)
+        self.assertEqual(sum(not entry.is_error for entry in self.calc.history), 2)
+        self.assertEqual(self.calc.answer.value, 3)
 
     def test_base_prefix_inside_variable_name_is_preserved(self):
         self.calc.evaluate("2->value0hFF")
@@ -130,6 +132,18 @@ class ExactArithmeticTests(unittest.TestCase):
     def test_ans(self):
         self.calc.evaluate("1/3")
         self.assertEqual(self.calc.calculate("3*ans"), "1")
+        self.assertEqual(self.calc.calculate("ans+ans->x"), "2")
+        with self.assertRaises(CalcError):
+            self.calc.evaluate("1/0->x")
+        self.assertEqual(self.calc.calculate("ans*5"), "10")
+        self.assertEqual(self.calc.variables["x"].value, 2)
+        self.assertEqual(self.calc.calculate("ans+1"), "11")
+
+    def test_ans_preserves_units_and_solution_lists(self):
+        self.calc.evaluate("12_in=>_ft")
+        self.assertEqual(self.calc.calculate("2*ans"), "2_ft")
+        self.calc.evaluate("solve(x^2-4,x)")
+        self.assertEqual(self.calc.calculate("ans"), "[-2, 2]")
 
     def test_symbolic_operations(self):
         y = sp.Symbol("y")
@@ -185,17 +199,25 @@ class ExactArithmeticTests(unittest.TestCase):
         self.assertEqual(self.calc.evaluate("approx(sqrt(2))").value, sp.N(sp.sqrt(2), 80))
         self.assertEqual(self.calc.calculate("0.1+0.2"), "3/10")
 
-    def test_history_cap_and_successful_entries(self):
+    def test_history_cap_includes_errors_without_changing_ans(self):
         for i in range(35):
             self.calc.evaluate(str(i))
         self.assertEqual(len(self.calc.history), 30)
         self.assertEqual(self.calc.history[0].source, "5")
         self.assertEqual(self.calc.history[-1].source, "34")
-        before = list(self.calc.history)
         with self.assertRaises(CalcError):
             self.calc.evaluate("1/0")
-        self.assertEqual(list(self.calc.history), before)
+        self.assertEqual(len(self.calc.history), 30)
+        self.assertEqual(self.calc.history[0].source, "6")
+        self.assertTrue(self.calc.history[-1].is_error)
+        self.assertEqual(self.calc.history[-1].line, "1/0 = Error: Division by zero.")
         self.assertEqual(self.calc.answer.value, 34)
+
+    def test_blank_and_unrecorded_errors_do_not_add_history(self):
+        for source, record in [("  ", True), ("0hG", False), ("1/0", False)]:
+            with self.subTest(source=source), self.assertRaises(CalcError):
+                self.calc.evaluate(source, record=record)
+        self.assertFalse(self.calc.history)
 
     def test_default_output_modes_and_validation(self):
         self.assertEqual(self.calc.output_mode, "exact")
@@ -277,7 +299,9 @@ class ExactArithmeticTests(unittest.TestCase):
         with self.assertRaises(CalcError):
             self.calc.evaluate("1/0->x")
         self.assertEqual(self.calc.variables["x"].value, 3)
-        self.assertEqual(len(self.calc.history), 1)
+        self.assertEqual(self.calc.answer.value, 3)
+        self.assertEqual(len(self.calc.history), 2)
+        self.assertTrue(self.calc.history[-1].is_error)
 
     def test_invalid_math_and_unsafe_python_are_rejected(self):
         sources = ["", "1/0", "0^-1", "ln(0)", "1%0", "(1+2", "1+", "sin()", "sin(1,2)",
