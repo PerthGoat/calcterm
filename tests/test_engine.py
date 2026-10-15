@@ -197,6 +197,81 @@ class ExactArithmeticTests(unittest.TestCase):
         self.assertEqual(list(self.calc.history), before)
         self.assertEqual(self.calc.answer.value, 34)
 
+    def test_default_output_modes_and_validation(self):
+        self.assertEqual(self.calc.output_mode, "exact")
+        self.assertEqual(self.calc.calculate("1/3"), "1/3")
+        self.calc.set_output_mode("approx")
+        self.assertEqual(self.calc.output_mode, "approximate")
+        for invalid in ("invalid", "degree", None):
+            with self.subTest(mode=invalid), self.assertRaises(CalcError):
+                self.calc.set_output_mode(invalid)
+        self.assertEqual(self.calc.output_mode, "approximate")
+        with self.assertRaises(CalcError):
+            Calculator(output_mode="invalid")
+
+    def test_approximate_output_for_fractions_irrationals_and_decimals(self):
+        self.calc.set_output_mode("approximate")
+        self.calc.set_precision(12)
+        for source, expected in {"1/3": "0.333333333333", "sqrt(2)": "1.41421356237",
+                                 "pi": "3.14159265359", "0.1+0.2": "0.3"}.items():
+            with self.subTest(source=source):
+                self.assertEqual(self.calc.calculate(source), expected)
+                self.assertEqual(self.calc.history[-1].result, expected)
+
+    def test_approximate_output_keeps_assignments_and_ans_exact(self):
+        self.calc.set_output_mode("approximate")
+        self.calc.set_precision(5)
+        self.assertEqual(self.calc.calculate("1/3->x"), "0.33333")
+        self.assertEqual(self.calc.variables["x"].value, sp.Rational(1, 3))
+        self.assertEqual(self.calc.answer.value, sp.Rational(1, 3))
+        self.assertEqual(self.calc.calculate("ans*3"), "1")
+        self.assertEqual(self.calc.calculate("x*3"), "1")
+        self.calc.set_output_mode("exact")
+        self.assertEqual(self.calc.calculate("x"), "1/3")
+        self.assertEqual(self.calc.history[0].result, "0.33333")
+
+    def test_approximate_output_supports_arbitrary_precision(self):
+        self.calc.set_output_mode("approximate")
+        self.calc.set_precision(120)
+        result = self.calc.calculate("pi")
+        self.assertEqual(result, str(sp.N(sp.pi, 120)))
+        self.assertGreater(len(result), 100)
+        self.assertEqual(self.calc.answer.value, sp.pi)
+        self.calc.set_precision(3)
+        integer = "1" + "0" * 5000 + "1"
+        self.assertEqual(self.calc.calculate(integer), integer)
+
+    def test_explicit_approx_precision_overrides_default_output_precision(self):
+        self.calc.set_output_mode("approximate")
+        self.calc.set_precision(12)
+        for digits in (5, 100):
+            with self.subTest(digits=digits):
+                result = self.calc.calculate(f"approx(pi,{digits})")
+                self.assertEqual(result, str(sp.N(sp.pi, digits)))
+                self.assertEqual(self.calc.calculate(f"approx(i*pi,{digits})"), result + "*I")
+                self.assertEqual(self.calc.calculate(f"approx(pi,{digits})*y"), result + "*y")
+
+    def test_approximate_output_supports_symbolic_expressions_and_solution_lists(self):
+        self.calc.set_output_mode("approximate")
+        self.calc.set_precision(12)
+        self.assertEqual(self.calc.calculate("pi*y"), "3.14159265359*y")
+        self.assertEqual(self.calc.calculate("solve(y^2-2,y)"), "[-1.41421356237, 1.41421356237]")
+        self.assertEqual(self.calc.calculate("solve(y^2-4,y)"), "[-2, 2]")
+        self.assertEqual(self.calc.calculate("[]"), "[]")
+
+    def test_approximate_output_converts_units_before_rounding(self):
+        self.calc.set_output_mode("approximate")
+        self.calc.set_precision(12)
+        self.assertEqual(self.calc.calculate("3_in=>_ft"), "0.25_ft")
+        self.assertEqual(self.calc.calculate("1_°C=>_°F"), "33.8_°F")
+        compound = self.calc.calculate("sqrt(2)*_m/_s")
+        self.assertIn("1.41421356237", compound)
+        self.assertEqual(self.calc.parse(compound).dims, self.calc.answer.dims)
+        self.calc.define_unit("thirdmeter", "1/3_m")
+        self.assertEqual(self.calc.registry.get("thirdmeter").scale, sp.Rational(1, 3))
+        self.assertEqual(self.calc.unit_definitions["thirdmeter"], "1/3_m")
+        self.assertEqual(self.calc.calculate("3_thirdmeter=>_m"), "1_m")
+
     def test_failed_assignment_does_not_mutate_state(self):
         self.calc.evaluate("3->x")
         with self.assertRaises(CalcError):

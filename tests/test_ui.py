@@ -665,6 +665,57 @@ class ConsoleTests(unittest.TestCase):
         self.assertIn("Error:", self.app.message)
         self.assertFalse(self.app.calculator.history)
 
+    def test_options_select_exact_and_approximate_output(self):
+        for label, mode, expected in (("Approximate output", "approximate", "0.33333"),
+                                      ("Exact output", "exact", "1/3")):
+            self.app.handle_key("F5")
+            self.type_keys(label)
+            self.app.handle_key("ENTER")
+            self.assertEqual(self.app.calculator.output_mode, mode)
+            self.assertIsNone(self.app.open_menu)
+            self.app.command(":precision 5")
+            self.type_keys("1/3")
+            self.app.handle_key("ENTER")
+            self.assertEqual(self.app.calculator.history[-1].result, expected)
+            lines, _, _ = self.app.frame()
+            self.assertIn(f"| {mode} |", lines[-2])
+
+    def test_output_mode_is_saved_and_restored_with_settings(self):
+        self.app.command(":format approximate")
+        self.app.command(":precision 12")
+        self.app.command(":unit thirdmeter = 1/3_m")
+        self.app.command(":save")
+        restored = ConsoleApp(config_path=self.config_path)
+        self.assertEqual(restored.calculator.output_mode, "approximate")
+        self.assertEqual(restored.calculator.calculate("1/3"), "0.333333333333")
+        self.assertEqual(restored.calculator.calculate("3_thirdmeter=>_m"), "1_m")
+        restored.command(":format exact")
+        restored.command(":save")
+        self.assertEqual(ConsoleApp(config_path=self.config_path).calculator.output_mode, "exact")
+
+    def test_older_settings_default_to_exact_and_gain_output_options(self):
+        menus = self.app.menus
+        menus[4]["items"] = [item for item in menus[4]["items"]
+                             if not item.get("command", "").startswith(":format ")]
+        self.config_path.write_text(json.dumps({"mode": "degree", "menus": menus}), encoding="utf-8")
+        restored = ConsoleApp(config_path=self.config_path)
+        self.assertEqual(restored.calculator.output_mode, "exact")
+        restored.handle_key("F5")
+        commands = [item.get("command") for item in restored.menu_items()]
+        self.assertIn(":format exact", commands)
+        self.assertIn(":format approximate", commands)
+
+    def test_invalid_output_mode_settings_are_preserved(self):
+        configuration = json.dumps({"mode": "degree", "output_mode": "invalid"})
+        self.config_path.write_text(configuration, encoding="utf-8")
+        restored = ConsoleApp(config_path=self.config_path)
+        self.assertIn("Config error:", restored.message)
+        self.assertEqual(restored.calculator.output_mode, "exact")
+        self.assertEqual(restored.calculator.mode, "radian")
+        self.assertEqual(self.config_path.read_text(encoding="utf-8"), configuration)
+        with self.assertRaises(CalcError):
+            restored.command(":format invalid")
+
     def test_custom_menu_and_unit_configuration_roundtrip(self):
         for command in [":mode degree", ":precision 123", ":recall expression", ":unit smoot = 1.7018_m",
                         ":unit span = 2_smoot", ":menu 1 Favorites", ":menuclear 1",
@@ -811,6 +862,17 @@ class ConsoleTests(unittest.TestCase):
 
 
 class CommandLineTests(unittest.TestCase):
+    def test_plain_and_eval_use_saved_output_mode(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = Path(directory) / "settings.json"
+            text = ":format approximate\n:precision 12\n1/3\n:save\n:quit\n"
+            with patch("sys.stdin", io.StringIO(text)), patch("sys.stdout", new_callable=io.StringIO) as output:
+                self.assertEqual(main(["--config", str(config), "--plain"]), 0)
+                self.assertIn("1/3 = 0.333333333333", output.getvalue())
+            with patch("sys.stdout", new_callable=io.StringIO) as output:
+                self.assertEqual(main(["--config", str(config), "--eval", "sqrt(2)"]), 0)
+                self.assertIn("sqrt(2) = 1.41421356237", output.getvalue())
+
     def test_eval_and_plain_modes_share_history_across_restarts(self):
         with tempfile.TemporaryDirectory() as directory:
             config = Path(directory) / "settings.json"

@@ -128,10 +128,21 @@ Prefixes and hexadecimal letters can use either case. Negative values, digit sep
 (`0hDEAD_BEEF`), arithmetic, assignments, and unit suffixes all work. Known unit suffixes
 retain their meaning: `0hC_F` means `12_F`; use `0hCF` for the integer `207`.
 Invalid digits and non-integer base literals are rejected.
-Exact irrational values remain symbolic, such as
-`sqrt(2)` and `pi`. `approx(pi,100)` explicitly requests an approximation with 100
-significant decimal digits. `:precision 100` sets the default for `approx(expression)`;
-it does not round exact calculations. Explicit approximations are finite-precision
+Exact output is the default: fractions and irrational values remain symbolic, such as
+`1/3`, `sqrt(2)`, and `pi`. F5 Options offers **Exact output** and **Approximate output**.
+You can also use `:format exact` or `:format approximate` (`:format approx` works too).
+`:precision 12` makes approximate output show up to 12 significant decimal digits:
+`1/3` displays as `0.333333333333`, and `3_in=>_ft` as `0.25_ft`. Integers remain intact.
+The status bar shows the current output mode. Use `:save` to keep the preference.
+
+Automatic approximation affects displayed results, including new history entries;
+calculations, variables, and `ans` retain their exact values. Switching modes leaves
+existing history entries unchanged. Symbolic expressions and solution lists are
+supported, and conversions are performed before rounding the result.
+
+`approx(pi,100)` explicitly requests an approximation with 100 significant decimal
+digits, overriding the default output precision for that value. `:precision 100`
+also sets the default for `approx(expression)`. Explicit approximations are finite-precision
 values, so subsequent arithmetic on those values follows their precision.
 The implementation follows [SymPy's exact arithmetic and arbitrary-precision model](https://docs.sympy.org/latest/tutorial/basic_operations.html).
 
@@ -204,7 +215,8 @@ Change labels and items in the app, then save:
 
 A menu item runs a `:` command if its text begins with `:`; otherwise it inserts
 text at the cursor. Each of the six menus can be configured. Options contains
-commands for radians/degrees, recall behavior, precision, menu editing, and saving.
+commands for radians/degrees, exact/approximate output, recall behavior, precision,
+menu editing, and saving.
 The settings file defaults to `calc_term_config.json` beside the script. Choose
 another with `python calc_term.py --config my_settings.json`. Changes persist when
 you execute `:save` or select Save configuration in F5.
@@ -218,6 +230,7 @@ loaded, preserving other actions. For example:
 {
   "mode": "radian",
   "precision": 100,
+  "output_mode": "exact",
   "history_insert": "result",
   "units": {"smoot": "1.7018_m"},
   "menus": [
@@ -236,7 +249,8 @@ Invalid configurations show an error, use defaults, and preserve the original fi
 Neither math input nor configuration executes Python or shell code.
 
 Other commands are `:vars`, `:unset NAME`, `:clear` (history), `:recall result`,
-`:recall expression`, `:mode radian`, `:mode degree`, `:precision DIGITS`, `:help`,
+`:recall expression`, `:mode radian`, `:mode degree`, `:format exact`,
+`:format approximate`, `:precision DIGITS`, `:help`,
 and `:quit`.
 
 For scripting, `--eval` can be repeated; expressions share variables and return a

@@ -138,10 +138,21 @@ class Quantity:
         raise CalcError(f"Unknown operator: {op}")
 
 
-def expression_text(value):
+def expression_text(value, full_prec: bool | str = "auto"):
     if isinstance(value, sp.Tuple):
-        return "[" + ", ".join(expression_text(x) for x in value) + "]"
-    return sp.sstr(value).replace("**", "^")
+        return "[" + ", ".join(expression_text(x, full_prec) for x in value) + "]"
+    return sp.sstr(value, full_prec=full_prec).replace("**", "^")
+
+
+def approximate_value(value, precision):
+    if isinstance(value, sp.Tuple):
+        return sp.Tuple(*(approximate_value(item, precision) for item in value))
+    # Keep integers intact and respect the precision of explicit approx(...) values.
+    if isinstance(value, (sp.Integer, sp.Float)) or value is sp.I:
+        return value
+    if value.has(sp.Float):
+        return value.func(*(approximate_value(arg, precision) for arg in value.args))
+    return sp.N(value, precision)
 
 
 class UnitRegistry:
@@ -327,7 +338,7 @@ class UnitRegistry:
         for name, label, value, dims in constants:
             self.add(name, label, "Constants", value, dims, constant=True)
 
-    def format(self, quantity):
+    def format(self, quantity, precision=None):
         unit = quantity.display
         if unit and unit.constant:
             unit = None
@@ -335,14 +346,17 @@ class UnitRegistry:
             unit = next((u for u in self.units.values() if not u.constant and u.dims == quantity.dims and u.scale == 1 and u.offset == 0), None)
         if unit:
             value = sp.simplify((quantity.value - unit.offset) / unit.scale)
-            text = expression_text(value)
+            if precision is not None:
+                value = approximate_value(value, precision)
+            text = expression_text(value, full_prec="auto" if precision is None else False)
             # A simple fraction followed by a unit is also a supported input literal.
             if not isinstance(value, (sp.Integer, sp.Rational, sp.Float, sp.Symbol)):
                 text = "(" + text + ")"
             if any(c in unit.name for c in "*/^"):
                 return text + "*(" + unit.notation + ")"
             return text + unit.notation
-        text = expression_text(quantity.value)
+        value = quantity.value if precision is None else approximate_value(quantity.value, precision)
+        text = expression_text(value, full_prec="auto" if precision is None else False)
         if quantity.dims == ZERO:
             return text
         numerator, denominator = [], []
@@ -545,7 +559,7 @@ class HistoryEntry:
 
 
 class Calculator:
-    def __init__(self, mode="radian", precision=50):
+    def __init__(self, mode="radian", precision=50, output_mode="exact"):
         self.registry = UnitRegistry()
         self.variables = {}
         self.history = deque(maxlen=30)
@@ -553,6 +567,7 @@ class Calculator:
         self.unit_definitions = {}
         self.set_mode(mode)
         self.set_precision(precision)
+        self.set_output_mode(output_mode)
 
     def set_mode(self, mode):
         mode = {"rad": "radian", "deg": "degree"}.get(mode, mode)
@@ -564,6 +579,16 @@ class Calculator:
         if isinstance(precision, bool) or not isinstance(precision, int) or precision < 2:
             raise CalcError("Precision must be an integer of at least 2 significant digits.")
         self.precision = precision
+
+    def set_output_mode(self, mode):
+        mode = "approximate" if mode == "approx" else mode
+        if mode not in ("exact", "approximate"):
+            raise CalcError("Output mode must be exact or approximate.")
+        self.output_mode = mode
+
+    def format(self, quantity):
+        precision = self.precision if self.output_mode == "approximate" else None
+        return self.registry.format(quantity, precision=precision)
 
     def parse(self, text):
         try:
@@ -617,11 +642,11 @@ class Calculator:
             self.variables[assignment] = value
         self.answer = value
         if record:
-            self.history.append(HistoryEntry(decimal_literals(source, self.registry), self.registry.format(value)))
+            self.history.append(HistoryEntry(decimal_literals(source, self.registry), self.format(value)))
         return value
 
     def calculate(self, text):
-        return self.registry.format(self.evaluate(text))
+        return self.format(self.evaluate(text))
 
     def define_unit(self, name, expression):
         name = name.removeprefix("_")
@@ -731,6 +756,10 @@ def command_item(label, command):
     return {"label": label, "command": command}
 
 
+def output_options():
+    return [command_item("Exact output", ":format exact"), command_item("Approximate output", ":format approximate")]
+
+
 def categorize_unit_items(registry, items):
     """Group unit insertion items, preserving other actions and existing submenus."""
     result = []
@@ -777,6 +806,7 @@ def default_menus(registry):
         {"label": "Constants", "items": [insert_item(u.notation + " " + u.label, u.notation) for u in constants]},
         {"label": "Symbols", "items": [insert_item(s + " " + label, s) for s, label in SYMBOLS]},
         {"label": "Options", "items": [command_item("Radian mode", ":mode radian"), command_item("Degree mode", ":mode degree"),
+         *output_options(),
          command_item("Select result first", ":recall result"), command_item("Select expression first", ":recall expression"),
          insert_item("Set precision", ":precision 100"), insert_item("Rename a menu", ":menu 1 Math"),
          insert_item("Add menu item", ":menuadd 1 Square | ^2"), command_item("Save configuration", ":save"),
@@ -832,6 +862,7 @@ HELP_LINES = [
     "3->x assigns x; x/X differ; _ft/_FT are the same unit.",
     "3_in=>_ft converts; 3_m/_s=>_kph; 2_m^2 is 2 square meters.",
     ":unit smoot = 1.7018_m    :mode degree    :precision 100",
+    ":format exact|approximate sets default output; :precision sets decimal digits.",
     ":menu 1 Favorites    :menuadd 1 Square | ^2    :menuclear 1",
     ":recall result|expression    :unset x    :vars    :clear    :save    :quit",
     "Decimals/fractions stay exact; approx(pi,100) requests a decimal approximation.",
@@ -910,7 +941,7 @@ class ConsoleApp:
             data = json.loads(self.config_path.read_text(encoding="utf-8"))
             if not isinstance(data, dict):
                 raise CalcError("Configuration must be a JSON object.")
-            calculator = Calculator(data.get("mode", "radian"), data.get("precision", 50))
+            calculator = Calculator(data.get("mode", "radian"), data.get("precision", 50), data.get("output_mode", "exact"))
             recall = data.get("history_insert", "result")
             if recall not in ("result", "expression"):
                 raise CalcError("history_insert must be result or expression.")
@@ -935,6 +966,10 @@ class ConsoleApp:
             menus = validate_menus(data["menus"]) if "menus" in data else default_menus(calculator.registry)
             if "menus" in data and not any("items" in item for item in menus[1]["items"]):
                 menus[1]["items"] = categorize_unit_items(calculator.registry, menus[1]["items"])
+            if menus[4]["label"] == "Options":
+                for option in output_options():
+                    if not any(item.get("command") == option["command"] for item in menus[4]["items"]):
+                        menus[4]["items"].append(option)
             self.calculator = calculator
             self.history_insert = recall
             self.menus = menus
@@ -944,6 +979,7 @@ class ConsoleApp:
 
     def save_config(self):
         data = {"mode": self.calculator.mode, "precision": self.calculator.precision,
+                "output_mode": self.calculator.output_mode,
                 "history_insert": self.history_insert, "units": self.calculator.unit_definitions,
                 "menus": self.menus}
         temporary = self.config_path.with_name(self.config_path.name + ".tmp")
@@ -1004,6 +1040,9 @@ class ConsoleApp:
         elif name == ":mode":
             self.calculator.set_mode(arg)
             self.message = "Angle mode: " + self.calculator.mode + "; :save to keep settings."
+        elif name == ":format":
+            self.calculator.set_output_mode(arg)
+            self.message = "Output mode: " + self.calculator.output_mode + "; :save to keep settings."
         elif name == ":precision":
             try:
                 self.calculator.set_precision(int(arg))
@@ -1021,7 +1060,7 @@ class ConsoleApp:
             self.message = "History cleared."
             self.save_history(force=True)
         elif name == ":vars":
-            self.message = "; ".join(f"{k} = {self.calculator.registry.format(v)}" for k, v in self.calculator.variables.items()) or "No assigned variables."
+            self.message = "; ".join(f"{k} = {self.calculator.format(v)}" for k, v in self.calculator.variables.items()) or "No assigned variables."
         elif name == ":unset":
             if arg not in self.calculator.variables:
                 raise CalcError("No assigned variable named " + arg)
@@ -1249,7 +1288,7 @@ class ConsoleApp:
         cursor = (input_row + 1, 3 + display_width(self.text[start_text:self.cursor]))
         c = self.calculator
         selection = "selected " + self.history_part if index is not None else "recall " + self.history_insert
-        lines.append(f" {c.mode.upper()} | history {len(c.history)}/{c.history.maxlen} | exact | approx {c.precision} digits | {selection}")
+        lines.append(f" {c.mode.upper()} | history {len(c.history)}/{c.history.maxlen} | {c.output_mode} | approx {c.precision} digits | {selection}")
         lines.append(self.message)
         lines += [""] * (height - len(lines))
         if self.help_open:
