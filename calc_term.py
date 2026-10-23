@@ -34,24 +34,32 @@ class CalcError(ValueError):
     """An input or configuration error suitable for displaying in the UI."""
 
 
+# Quantities track powers of the seven SI base dimensions in a fixed order:
+# length, mass, time, current, temperature, amount of substance, and luminous intensity.
+# A tuple of zeros represents a dimensionless value, such as a plain number.
 ZERO = (sp.S.Zero,) * 7
 BASE_NAMES = ("m", "kg", "s", "A", "°K", "mol", "cd")
 
 
 def dimension(**powers):
+    # Named powers make definitions readable, e.g. velocity is dimension(L=1, T=-1).
     return tuple(sp.Rational(powers.get(k, 0)) for k in ("L", "M", "T", "I", "K", "N", "J"))
 
 
 def combine_dims(left, right, sign=1):
+    # Multiplication adds dimension powers; division subtracts them.
     return tuple(a + sign * b for a, b in zip(left, right))
 
 
 def unit_key(name):
+    # Normalize equivalent Unicode spellings and case without changing variable names.
     return unicodedata.normalize("NFKC", name.removeprefix("_")).casefold()
 
 
 @dataclass(frozen=True)
 class Unit:
+    # Convert a coordinate in this unit to SI with: value * scale + offset.
+    # Constants use the same representation but cannot be conversion targets.
     name: str
     label: str
     category: str
@@ -67,17 +75,21 @@ class Unit:
 
 @dataclass(frozen=True)
 class Quantity:
+    # value is stored in SI base units; display only records a preferred output unit.
+    # SymPy values also let dimensionless results hold symbols, lists, or booleans.
     value: sp.Basic
     dims: tuple = ZERO
     display: Unit | None = None
 
     def checked(self):
+        # Check intermediate results too, so undefined values cannot cancel away later.
         if self.value.has(sp.zoo, sp.nan, sp.oo, -sp.oo):
             raise CalcError("The result is undefined or infinite (check division by zero and domains).")
         return self
 
     @property
     def affine(self):
+        # Celsius and Fahrenheit have an offset from the SI origin (absolute zero).
         return self.display is not None and self.display.offset != 0
 
     def negate(self):
@@ -89,6 +101,7 @@ class Quantity:
         return replace(self, value=sp.Mul(-1, self.value))
 
     def arithmetic(self, op, other):
+        # Binary arithmetic operators keep values and dimensions aligned here.
         if not isinstance(self.value, sp.Expr) or not isinstance(other.value, sp.Expr):
             raise CalcError("Arithmetic requires scalar expressions.")
         if op in ("+", "-"):
@@ -98,6 +111,7 @@ class Quantity:
                 raise CalcError("Use Kelvin or deltaC/deltaF for temperature arithmetic.")
             display = self.display if self.affine else other.display if other.affine else self.display or other.display
             if op == "-" and self.affine and other.affine:
+                # Subtracting absolute temperatures yields a difference with no offset.
                 display = Unit("deltaK", "kelvin difference", "Temperature", sp.S.One, self.dims)
             value = sp.Add(self.value, other.value if op == "+" else sp.Mul(-1, other.value))
             return Quantity(value, self.dims, display).checked()
@@ -115,6 +129,7 @@ class Quantity:
                 display = None
             return Quantity(value, dims, display).checked()
         if op == "^":
+            # Apply the exponent to both the number and each physical dimension.
             if other.dims != ZERO:
                 raise CalcError("An exponent must be dimensionless.")
             if self.dims != ZERO and not isinstance(other.value, sp.Rational):
@@ -138,6 +153,7 @@ class Quantity:
         raise CalcError(f"Unknown operator: {op}")
 
     def compare(self, op, other):
+        # Values already share SI coordinates, so compatible units compare directly.
         equality = op in ("=", "==", "!=")
         for value in (self.value, other.value):
             if not isinstance(value, sp.Expr) and not (equality and value in (sp.true, sp.false)):
@@ -145,6 +161,8 @@ class Quantity:
         if self.dims != other.dims:
             raise CalcError("Cannot compare quantities with different dimensions.")
         result = COMPARISONS[op](self.value, other.value)
+        # A symbolic relation can sometimes simplify to a definite truth value.
+        # Otherwise report an error instead of guessing whether it is True or False.
         if result not in (sp.true, sp.false):
             result = sp.simplify(result)
         if result not in (sp.true, sp.false):
@@ -152,13 +170,16 @@ class Quantity:
         return Quantity(result)
 
 
+# Result formatting preserves exact values unless approximation was requested.
 def expression_text(value, full_prec: bool | str = "auto"):
+    # Use calculator syntax for powers and solution lists so results can be recalled.
     if isinstance(value, sp.Tuple):
         return "[" + ", ".join(expression_text(x, full_prec) for x in value) + "]"
     return sp.sstr(value, full_prec=full_prec).replace("**", "^")
 
 
 def approximate_value(value, precision):
+    # Approximate a copy for output; stored quantities and variables remain unchanged.
     if isinstance(value, sp.Tuple):
         return sp.Tuple(*(approximate_value(item, precision) for item in value))
     if value in (sp.true, sp.false):
@@ -194,6 +215,8 @@ class UnitRegistry:
             raise CalcError(f"Unknown unit {name}. Use F2 or :unit NAME = expression.") from None
 
     def _builtins(self):
+        # Reuse dimension definitions across the unit tables below. Scale factors
+        # are relative to SI and decimal strings become exact rational numbers.
         L, M, T = dimension(L=1), dimension(M=1), dimension(T=1)
         force = dimension(L=1, M=1, T=-2)
         energy = dimension(L=2, M=1, T=-2)
@@ -208,6 +231,7 @@ class UnitRegistry:
         inductance = dimension(L=2, M=1, T=-2, I=-2)
 
         def group(category, dims, rows):
+            # Each compact table row contains a unit name, menu label, and SI scale.
             for row in rows.strip().splitlines():
                 name, label, scale = row.strip().split("|")
                 self.add(name, label, category, scale, dims)
@@ -327,6 +351,8 @@ class UnitRegistry:
         self.add("Wb", "weber", "Magnetic Flux", 1, flux)
         group("Inductance", inductance, "henry|henry|1\nmH|millihenry|0.001\nnH|nanohenry|1e-9\nμH|microhenry|1e-6")
 
+        # Physical constants carry dimensions just like units. Derived constants
+        # stay symbolic; measured values retain the published precision of the table.
         c, h, k, q, na = map(sp.Rational, ("299792458", "6.62607015e-34", "1.380649e-23", "1.602176634e-19", "6.02214076e23"))
         epsilon = sp.Rational("8.8541878188e-12")
         constants = (
@@ -355,12 +381,14 @@ class UnitRegistry:
             self.add(name, label, "Constants", value, dims, constant=True)
 
     def format(self, quantity, precision=None):
+        # Prefer the requested display unit, then a matching SI unit if one exists.
         unit = quantity.display
         if unit and unit.constant:
             unit = None
         if unit is None and quantity.dims != ZERO:
             unit = next((u for u in self.units.values() if not u.constant and u.dims == quantity.dims and u.scale == 1 and u.offset == 0), None)
         if unit:
+            # Reverse the SI transformation before rounding, especially for temperatures.
             value = sp.simplify((quantity.value - unit.offset) / unit.scale)
             if precision is not None:
                 value = approximate_value(value, precision)
@@ -375,6 +403,7 @@ class UnitRegistry:
         text = expression_text(value, full_prec="auto" if precision is None else False)
         if quantity.dims == ZERO:
             return text
+        # Without a named display unit, build a parseable product of SI base units.
         numerator, denominator = [], []
         for name, exponent in zip(BASE_NAMES, quantity.dims):
             if exponent:
@@ -389,6 +418,7 @@ class UnitRegistry:
         return "(" + text + ")*(" + units + ")"
 
 
+# Input grammar: recognize only calculator tokens, never Python source code.
 # Unit tokens deliberately keep case; the registry alone ignores it.
 DIGITS = r"\d+(?:_\d+)*"
 BASES = {"b": 2, "h": 16, "o": 8}
@@ -397,6 +427,7 @@ TOKEN = re.compile(rf"(?P<number>{DIGITS}/{DIGITS}(?=_°?[^\W\d_])|"
                    rf"(?:{DIGITS}(?:\.(?:{DIGITS})?)?|\.{DIGITS})(?:[eE][+-]?{DIGITS})?)|"
                    r"(?P<unit>_°?[^\W\d_][^\W_]*)|(?P<name>[^\W\d_][^\W_]*)|"
                    r"(?P<op>\*\*|<=|>=|==|!=|[<>=+\-*/^%(),!\[\]])", re.UNICODE)
+# Explicit tables define the supported comparisons, reserved values, and functions.
 COMPARISONS = {"<": sp.Lt, ">": sp.Gt, "<=": sp.Le, ">=": sp.Ge,
                "=": sp.Eq, "==": sp.Eq, "!=": sp.Ne}
 RESERVED = {"pi": sp.pi, "π": sp.pi, "e": sp.E, "E": sp.E, "i": sp.I, "I": sp.I,
@@ -409,6 +440,7 @@ TRANSLATE = str.maketrans({"→": "->", "⇒": "=>", "×": "*", "÷": "/", "−"
 
 
 def normalize_input(text):
+    # Translate supported mathematical symbols into the parser's operator spellings.
     return text.translate(TRANSLATE).strip()
 
 
@@ -436,6 +468,7 @@ def decimal_literals(text: str, registry: UnitRegistry) -> str:
         return str(value) + suffix
 
     text = BASE_LITERAL.sub(convert, text)
+    # Remove grouping underscores only from numbers; unit suffixes must keep theirs.
     return TOKEN.sub(lambda match: match.group().replace("_", "")
                      if match.lastgroup == "number" else match.group(), text)
 
@@ -444,6 +477,7 @@ class Parser:
     """Pratt parser with a strict function allowlist and exact numeric tokens."""
 
     def __init__(self, calculator, text, unit_only=False):
+        # Conversion targets use a restricted grammar without variables or functions.
         self.calculator = calculator
         self.unit_only = unit_only
         text = decimal_literals(text, calculator.registry)
@@ -459,6 +493,7 @@ class Parser:
             token = match.group().replace("_", "") if match.lastgroup == "number" else match.group()
             self.tokens.append((match.lastgroup, token))
             position = match.end()
+        # An explicit end token lets parsing report incomplete input consistently.
         self.tokens.append(("end", ""))
         self.index = 0
 
@@ -476,12 +511,15 @@ class Parser:
         self.take()
 
     def parse(self):
+        # A successful parse must consume the whole input, not just a valid prefix.
         value = self.expression()
         if self.peek()[0] != "end":
             raise CalcError(f"Unexpected token '{self.peek()[1]}'.")
         return value.checked()
 
     def expression(self, minimum=0):
+        # First read an operand: a literal, prefix sign, group, unit, or named value.
+        # minimum is the weakest operator precedence this recursive call may consume.
         kind, token = self.take()
         if kind == "number":
             try:
@@ -489,6 +527,7 @@ class Parser:
             except (ValueError, ZeroDivisionError):
                 raise CalcError("Invalid number or zero denominator.") from None
         elif token in ("+", "-"):
+            # Powers bind more tightly than a leading sign: -2^2 means -(2^2).
             left = self.expression(25)
             if token == "-":
                 left = left.negate()
@@ -530,10 +569,13 @@ class Parser:
             elif token == "ans":
                 left = self.calculator.answer
             else:
+                # Unassigned names remain symbolic rather than being treated as errors.
                 left = self.calculator.variables.get(token, Quantity(sp.Symbol(token)))
         else:
             raise CalcError(f"Expected a number, variable, unit, or parenthesis; found '{token or 'end of input'}'.")
 
+        # Extend the operand with suffixes and operators until a weaker operator
+        # or a delimiter belongs to the enclosing expression.
         while True:
             kind, token = self.peek()
             if kind == "unit" and minimum <= 40:
@@ -544,6 +586,7 @@ class Parser:
                 if left.dims != ZERO:
                     raise CalcError("Use * or / between units, for example 3_m/_s.")
                 if self.peek()[1] in ("^", "**"):
+                    # In 2_m^2, only the unit is squared; (2_m)^2 squares the value too.
                     if unit.offset:
                         raise CalcError("Offset temperature units cannot be raised to powers.")
                     self.take()
@@ -571,11 +614,14 @@ class Parser:
             precedence = {"+": 10, "-": 10, "*": 20, "/": 20, "%": 20, "^": 30, "**": 30}.get(token)
             implicit = False
             if precedence is None and (kind in ("number", "name") or token == "(") and not self.unit_only:
+                # Adjacent operands such as 2(x+1) imply multiplication.
                 precedence, token, implicit = 20, "*", True
             if precedence is None or precedence < minimum:
                 break
             if not implicit:
                 self.take()
+            # Equal precedence on the right makes powers associate right to left.
+            # Other operators use a higher threshold so they associate left to right.
             right = self.expression(precedence if token in ("^", "**") else precedence + 1)
             left = left.arithmetic("^" if token == "**" else token, right)
         return left.checked()
@@ -583,6 +629,7 @@ class Parser:
 
 @dataclass(frozen=True)
 class HistoryEntry:
+    # Store display strings so history can be restored without executing expressions.
     source: str
     result: str
     is_error: bool = False
@@ -592,6 +639,7 @@ class HistoryEntry:
         return f"{self.source} = {'Error: ' if self.is_error else ''}{self.result}"
 
 
+# Calculation engine: session variables, exact answers, and evaluation settings.
 class Calculator:
     def __init__(self, mode="radian", precision=50, output_mode="exact"):
         self.registry = UnitRegistry()
@@ -621,10 +669,12 @@ class Calculator:
         self.output_mode = mode
 
     def format(self, quantity):
+        # The output preference affects presentation rather than stored precision.
         precision = self.precision if self.output_mode == "approximate" else None
         return self.registry.format(quantity, precision=precision)
 
     def parse(self, text):
+        # Translate library/parser failures into errors suitable for all UI modes.
         try:
             return Parser(self, normalize_input(text)).parse()
         except CalcError:
@@ -633,6 +683,7 @@ class Calculator:
             raise CalcError(f"Cannot evaluate this expression: {exc}") from None
 
     def evaluate(self, text, record=True):
+        # Failed input is recorded here; only successful evaluation updates ans.
         source = text.strip()
         try:
             return self._evaluate(source, record)
@@ -643,6 +694,8 @@ class Calculator:
             raise
 
     def _evaluate(self, source, record):
+        # Peel off assignment and conversion arrows before parsing the expression.
+        # This also permits a conversion followed by assignment, such as 3_in=>_ft->x.
         text = normalize_input(source)
         if not text:
             raise CalcError("Enter an expression.")
@@ -679,6 +732,7 @@ class Calculator:
                 target = Unit(target_text, "compound unit", "Compound", parsed.value, parsed.dims)
             if value.dims != target.dims:
                 raise CalcError("The source and target units have different dimensions.")
+            # Converting changes the display unit; the underlying SI value stays exact.
             value = replace(value, display=target)
         else:
             value = self.parse(text)
@@ -696,6 +750,7 @@ class Calculator:
         return self.format(self.evaluate(text))
 
     def define_unit(self, name, expression):
+        # A custom unit supplies an SI scale and dimensions from a numeric expression.
         name = name.removeprefix("_")
         if not re.fullmatch(r"°?[^\W\d_][^\W_]*", name, re.UNICODE):
             raise CalcError("A unit name starts with a letter (optionally °) and contains letters or digits.")
@@ -710,6 +765,7 @@ class Calculator:
         self.unit_definitions[name] = definition
 
     def function(self, name, args):
+        # Validate argument counts and types before dispatching allowed SymPy operations.
         arities = {"log": (1, 2), "diff": (2, 3), "integrate": (2, 4), "solve": (2,), "subs": (3,), "approx": (1, 2), "min": None, "max": None}
         accepted = arities.get(name, (1,))
         if (accepted is None and not args) or (accepted is not None and len(args) not in accepted):
@@ -741,6 +797,7 @@ class Calculator:
             if not isinstance(args[1].value, sp.Symbol) or args[1].dims != ZERO or args[2].dims != ZERO:
                 raise CalcError("Use subs(expression, unassigned_variable, dimensionless_value).")
             return replace(first, value=first.value.subs(args[1].value, args[2].value)).checked()
+        # Calculus and solving require a symbolic variable, rather than its assigned value.
         if name in ("diff", "integrate", "solve"):
             if args[1].dims != ZERO or not isinstance(args[1].value, sp.Symbol):
                 raise CalcError("The second argument must be an unassigned symbolic variable.")
@@ -765,6 +822,7 @@ class Calculator:
         if any(a.dims != ZERO for a in args):
             raise CalcError(f"{name} requires dimensionless arguments.")
         value = first.value
+        # SymPy uses radians, so degree mode converts inputs and inverse-trig outputs.
         if name in ("sin", "cos", "tan") and self.mode == "degree":
             value *= sp.pi / 180
         if name == "factorial":
@@ -785,6 +843,8 @@ class Calculator:
         return Quantity(result).checked()
 
 
+# Menus are plain data: an item inserts text, runs a ':' command, or has child items.
+# The same structure is used for built-in menus and saved JSON configuration.
 SYMBOLS = [
     ("ε", "epsilon"), ("μ", "mu"), ("Ω", "omega (uppercase)"), ("π", "pi"),
     ("θ", "theta"), ("α", "alpha"), ("β", "beta"), ("γ", "gamma"),
@@ -842,6 +902,7 @@ def filter_menu_items(items, query):
 
 
 def default_menus(registry):
+    # Build F1-F6 from the current registry, including any loaded custom units.
     units = sorted((u for u in registry.units.values() if not u.constant), key=lambda u: (u.category, u.name))
     constants = [u for u in registry.units.values() if u.constant]
     return [
@@ -866,6 +927,7 @@ def default_menus(registry):
 
 
 def validate_menus(menus):
+    # Validate the full tree before installing it; cap nesting to prevent runaway recursion.
     if not isinstance(menus, list) or len(menus) != 6:
         raise CalcError("Configuration must contain exactly six menus (F1 to F6).")
     def validate_items(entries, depth=0):
@@ -927,6 +989,7 @@ class ConsoleApp:
         self.history_path = self.config_path.with_suffix(".history.json")
         self._saved_history: tuple[HistoryEntry, ...] = ()
         self.menus = default_menus(self.calculator.registry)
+        # Editing and history selection are separate: browsing must not move the cursor.
         self.text = ""
         self.cursor = 0
         self.history_index = None
@@ -934,6 +997,8 @@ class ConsoleApp:
         self.history_start = 0
         self.history_part = "result"
         self.history_insert = "result"
+        # open_menu selects F1-F6; the stack remembers each submenu's parent selection
+        # and filter so Left/Esc can restore the exact navigation state.
         self.open_menu = None
         self.menu_index = 0
         self.menu_filter = ""
@@ -945,6 +1010,7 @@ class ConsoleApp:
         self._load_history()
 
     def _load_history(self):
+        # History is display-only data; restoring it does not recreate variables or ans.
         try:
             data = json.loads(self.history_path.read_text(encoding="utf-8"))
             if not isinstance(data, list):
@@ -986,6 +1052,7 @@ class ConsoleApp:
         return True
 
     def _load_config(self):
+        # Prepare a separate calculator and menu tree, committing them only when valid.
         if not self.config_path.exists():
             return
         try:
@@ -1029,6 +1096,8 @@ class ConsoleApp:
             self.message = f"Config error: {exc} (using defaults; original file preserved)"
 
     def save_config(self):
+        # Write beside the destination and replace it only after serialization succeeds.
+        # Settings and unit definitions are saved here; history has its own file.
         data = {"mode": self.calculator.mode, "precision": self.calculator.precision,
                 "output_mode": self.calculator.output_mode,
                 "history_insert": self.history_insert, "units": self.calculator.unit_definitions,
@@ -1047,6 +1116,7 @@ class ConsoleApp:
         self.history_index = None
 
     def browse_history(self, direction: int, page: bool = False):
+        # Each successful row has two selectable parts; error rows expose only the input.
         history = self.calculator.history
         if not history:
             return
@@ -1071,12 +1141,14 @@ class ConsoleApp:
             self.history_index, self.history_part = parts[position]
 
     def menu_items(self):
+        # Filtering applies to the active submenu, or the root when no submenu is open.
         if self.open_menu is None:
             return []
         menu = self.menu_stack[-1][0] if self.menu_stack else self.menus[self.open_menu]
         return filter_menu_items(menu["items"], self.menu_filter.casefold())
 
     def open_submenu(self, item):
+        # Save the parent position while the child starts with a fresh selection/filter.
         self.menu_stack.append((item, self.menu_index, self.menu_filter))
         self.menu_index = 0
         self.menu_filter = ""
@@ -1085,6 +1157,7 @@ class ConsoleApp:
         _, self.menu_index, self.menu_filter = self.menu_stack.pop()
 
     def command(self, text):
+        # Colon commands change application state instead of entering the math parser.
         name, _, arg = text.partition(" ")
         arg = arg.strip()
         if name == ":quit":
@@ -1154,6 +1227,7 @@ class ConsoleApp:
             raise CalcError("Unknown command. Use :help for commands.")
 
     def submit(self):
+        # Both interactive and plain mode share this command/calculation path.
         if not self.text.strip():
             return
         try:
@@ -1167,11 +1241,14 @@ class ConsoleApp:
             self.cursor = 0
             self.history_index = None
         except (CalcError, OSError) as exc:
+            # Keep failed input in the editor for correction and persist any error entry.
             self.message = "Error: " + str(exc)
             self.history_index = None
             self.save_history()
 
     def handle_key(self, key):
+        # Dispatch global shortcuts first, then route keys to help, menus, or the editor.
+        # Terminal-specific key encodings have already been converted to names here.
         if key in ("CTRL_C", "CTRL_D"):
             self.running = False
             return
@@ -1196,6 +1273,8 @@ class ConsoleApp:
             elif key == "RIGHT" and items and "items" in items[self.menu_index]:
                 self.open_submenu(items[self.menu_index])
             elif key in ("LEFT", "RIGHT"):
+                # Right on a leaf (or empty filter) advances to the next top menu.
+                # Left inside a submenu was handled above by returning to its parent.
                 self.open_menu = (self.open_menu + (1 if key == "RIGHT" else -1)) % 6
                 self.menu_index = 0
                 self.menu_filter = ""
@@ -1298,6 +1377,8 @@ class ConsoleApp:
             menu_titles = [f"F{i + 1} {clip(menu['label'], label_width)}" for i, menu in enumerate(self.menus)]
         lines = ["  ".join(menu_titles), "-" * width]
         selected: dict[int, tuple[int, int]] = {}
+        # Choose a visible history window that follows either the newest result
+        # or the older entry currently selected with the navigation keys.
         index = self.history_index
         history = list(self.calculator.history)
         last_start = max(0, len(history) - self.history_rows)
@@ -1348,6 +1429,7 @@ class ConsoleApp:
         lines.append(self.message)
         lines += [""] * (height - len(lines))
         if self.help_open:
+            # Overlays replace the relevant frame rows and hide the editing cursor.
             selected = {}
             for row, text in enumerate(["HELP (Esc to close)"] + HELP_LINES, start=2):
                 if row >= height:
@@ -1355,6 +1437,8 @@ class ConsoleApp:
                 lines[row] = text
             cursor = None
         elif self.open_menu is not None:
+            # Rebuild each level from the saved navigation stack, placing child panels
+            # beside their parents where space allows. Only the active level is selected.
             root = self.menus[self.open_menu]
             levels = [root] + [item for item, _, _ in self.menu_stack]
             indices = [parent_index for _, parent_index, _ in self.menu_stack] + [self.menu_index]
@@ -1395,6 +1479,8 @@ class ConsoleApp:
         return lines, selected, cursor
 
 
+# Layout helpers measure terminal cells, which differ from Python string indices
+# for combining marks and wide Unicode characters.
 def display_width(text):
     return sum(0 if unicodedata.combining(c) else 2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in text)
 
@@ -1415,6 +1501,7 @@ def clip(text, width):
 
 
 def menu_panel(items, heading, index, width, height, submenu=False):
+    # Return one bounded dropdown and its first visible item for scrolling/highlighting.
     labels = [item["label"] + (" >" if "items" in item else "") for item in items]
     box_width = min(width, max(26, min(68, max([display_width(heading)] + [display_width(label) for label in labels]) + 4)))
     room = min(max(1, len(items)), max(1, height - 9))
@@ -1437,6 +1524,7 @@ def menu_panel(items, heading, index, width, height, submenu=False):
     return panel, first
 
 
+# Map Windows extended keys and POSIX escape sequences to shared UI key names.
 WINDOWS_KEYS = {"H": "UP", "P": "DOWN", "K": "LEFT", "M": "RIGHT", "G": "HOME", "O": "END",
                 "I": "PAGEUP", "Q": "PAGEDOWN", "S": "DELETE", ";": "F1", "<": "F2", "=": "F3",
                 ">": "F4", "?": "F5", "@": "F6"}
@@ -1458,6 +1546,7 @@ class Terminal:
         self.size = None
 
     def __enter__(self):
+        # Save the host console settings before enabling interactive terminal behavior.
         self.old_mode = None
         if os.name == "nt":
             import ctypes
@@ -1468,6 +1557,7 @@ class Terminal:
             self.kernel.GetConsoleMode.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
             self.kernel.SetConsoleMode.argtypes = [wintypes.HANDLE, wintypes.DWORD]
             self.handle = self.kernel.GetStdHandle(-11 & 0xffffffff)
+            # Windows needs virtual terminal processing (0x0004) for ANSI output.
             mode = wintypes.DWORD()
             if not self.kernel.GetConsoleMode(self.handle, ctypes.byref(mode)):
                 raise CalcError("Interactive mode needs a Windows console. Use --plain in redirected shells.")
@@ -1478,12 +1568,15 @@ class Terminal:
             import termios
             import tty
             self.old_mode = termios.tcgetattr(sys.stdin.fileno())
+            # Raw mode delivers individual keys without waiting for Enter or echoing them.
             tty.setraw(sys.stdin.fileno())
+        # Use the alternate screen so the user's previous terminal contents survive exit.
         sys.stdout.write("\x1b[?1049h\x1b[2J\x1b[H")
         sys.stdout.flush()
         return self
 
     def __exit__(self, *args):
+        # Restore the cursor, screen, and console settings even when the app raises.
         try:
             sys.stdout.write("\x1b[?25h\x1b[?1049l")
             sys.stdout.flush()
@@ -1508,8 +1601,10 @@ class Terminal:
                     time.sleep(min(0.01, remaining))
             char = msvcrt.getwch()
             if char in ("\x00", "\xe0"):
+                # Windows extended keys arrive as a prefix followed by a key code.
                 return WINDOWS_KEYS.get(msvcrt.getwch(), "UNKNOWN")
             if 0xd800 <= ord(char) <= 0xdbff:
+                # Join UTF-16 surrogate pairs into one Unicode character.
                 following = msvcrt.getwch()
                 return (char + following).encode("utf-16", "surrogatepass").decode("utf-16")
         else:
@@ -1521,6 +1616,7 @@ class Terminal:
             if not char:
                 return "CTRL_D"
             if char == b"\x1b":
+                # A short lookahead distinguishes Esc alone from a multi-byte key sequence.
                 sequence = char
                 while select.select([sys.stdin], [], [], 0.04)[0]:
                     sequence += os.read(sys.stdin.fileno(), 1)
@@ -1531,6 +1627,7 @@ class Terminal:
                         break
                 return "ESC" if sequence == b"\x1b" else "UNKNOWN"
             required = 1 if char[0] < 0x80 else 2 if char[0] < 0xe0 else 3 if char[0] < 0xf0 else 4
+            # Read the rest of a UTF-8 character before passing it to the editor.
             while len(char) < required:
                 char += os.read(sys.stdin.fileno(), 1)
             char = char.decode("utf-8", "replace")
@@ -1544,6 +1641,8 @@ class Terminal:
         if self.size != (width, height):
             output.append("\x1b[2J")
         self.size = (width, height)
+        # Apply ANSI highlighting to the plain frame, then write the completed redraw
+        # in one batch. Frame coordinates for the cursor are already one-based.
         for row, line in enumerate(lines):
             output.append(f"\x1b[{row + 1};1H\x1b[2K")
             if row in selected:
@@ -1557,6 +1656,7 @@ class Terminal:
         sys.stdout.flush()
 
     def run(self, app):
+        # Poll periodically to detect resizes while idle; redraw after input or size changes.
         self.render(app)
         while app.running:
             key = self.read_key(timeout=0.1)
@@ -1568,6 +1668,7 @@ class Terminal:
                 self.render(app)
 
 
+# Entry point: the same calculator supports batch, line-oriented, and full-screen use.
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Exact symbolic console math, units, and configurable F1-F6 menus.")
     parser.add_argument("--config", type=Path, help="JSON configuration path (default: beside calc_term.py)")
@@ -1579,6 +1680,7 @@ def main(argv=None):
     if callable(reconfigure):
         reconfigure(encoding="utf-8", errors="replace")
     app = ConsoleApp(config_path=options.config)
+    # Repeated --eval options share one session, including variables and ans.
     if options.expressions:
         status = 0
         for text in options.expressions:
@@ -1595,6 +1697,7 @@ def main(argv=None):
                     print(app.message, file=sys.stderr)
         return status
     if options.plain or not (sys.stdin.isatty() and sys.stdout.isatty()):
+        # Pipes and basic terminals use complete input lines instead of raw key handling.
         if sys.stdin.isatty():
             print("Exact console calculator; :help for commands; :quit to exit.")
         while app.running:
@@ -1615,6 +1718,7 @@ def main(argv=None):
         return 0
     status = 0
     try:
+        # The context manager restores terminal state before errors are printed.
         with Terminal() as terminal:
             terminal.run(app)
     except KeyboardInterrupt:
