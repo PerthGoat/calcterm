@@ -86,6 +86,10 @@ settings, units, and menus.
 x+X                     = 10
 0.1+0.2                 = 3/10
 1/3+1/6                 = 1/2
+3>6                     = False
+3<=6                    = True
+0.1+0.2==0.3            = True
+3!=6                    = True
 3_in=>_ft               = 1/4_ft
 1/4_ft=>_in             = 3_in
 3_m/_s=>_kph            = 54/5_kph
@@ -112,6 +116,15 @@ assigned name symbolic again before differentiating or solving with that variabl
 
 Supported operators are `+ - * / ^ ** % !`, parentheses, and implicit multiplication
 such as `2(x+1)`. `^` is exponentiation and associates to the right; `-2^2` is `-4`.
+Comparisons `<`, `>`, `<=`, `>=`, `=` (or `==`), and `!=` return `True` or `False`.
+The Unicode forms `≤`, `≥`, and `≠` also work. Arithmetic takes precedence over
+comparisons, and chains such as `1<2<=3` compare each adjacent pair. Compatible
+units are compared in their base units: `1_m==100_cm` returns `True`; comparing
+different dimensions is an error. Assign numeric values to symbolic variables
+before comparing them if the result cannot otherwise be determined.
+Boolean results work with assignments, `ans`, and history recall; `True` and `False`
+are reserved literals. Booleans support equality comparisons and cannot be used
+in arithmetic, unit conversions, or scalar functions.
 Functions include `sqrt`, `cbrt`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `sinh`,
 `cosh`, `tanh`, `exp`, `ln`, `log`, `abs`, `floor`, `ceil`, `factorial`, `min`, `max`,
 `simplify`, `expand`, `factor`, `diff`, `integrate`, `solve`, `subs`, and `approx`.

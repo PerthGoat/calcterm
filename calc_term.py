@@ -82,7 +82,7 @@ class Quantity:
 
     def negate(self):
         if not isinstance(self.value, sp.Expr):
-            raise CalcError("A collection of solutions cannot be used as a scalar.")
+            raise CalcError("Negation requires a scalar expression.")
         # A leading minus on -40_°C refers to its temperature coordinate.
         if self.display is not None and self.affine:
             return replace(self, value=sp.Add(sp.Mul(2, self.display.offset), sp.Mul(-1, self.value)))
@@ -90,7 +90,7 @@ class Quantity:
 
     def arithmetic(self, op, other):
         if not isinstance(self.value, sp.Expr) or not isinstance(other.value, sp.Expr):
-            raise CalcError("A collection of solutions cannot be used as a scalar.")
+            raise CalcError("Arithmetic requires scalar expressions.")
         if op in ("+", "-"):
             if self.dims != other.dims:
                 raise CalcError("Cannot add or subtract quantities with different dimensions.")
@@ -137,6 +137,20 @@ class Quantity:
             return Quantity(value).checked()
         raise CalcError(f"Unknown operator: {op}")
 
+    def compare(self, op, other):
+        equality = op in ("=", "==", "!=")
+        for value in (self.value, other.value):
+            if not isinstance(value, sp.Expr) and not (equality and value in (sp.true, sp.false)):
+                raise CalcError("Comparisons require scalar expressions (or booleans for equality).")
+        if self.dims != other.dims:
+            raise CalcError("Cannot compare quantities with different dimensions.")
+        result = COMPARISONS[op](self.value, other.value)
+        if result not in (sp.true, sp.false):
+            result = sp.simplify(result)
+        if result not in (sp.true, sp.false):
+            raise CalcError("Cannot determine True or False; assign values to symbolic variables first.")
+        return Quantity(result)
+
 
 def expression_text(value, full_prec: bool | str = "auto"):
     if isinstance(value, sp.Tuple):
@@ -147,6 +161,8 @@ def expression_text(value, full_prec: bool | str = "auto"):
 def approximate_value(value, precision):
     if isinstance(value, sp.Tuple):
         return sp.Tuple(*(approximate_value(item, precision) for item in value))
+    if value in (sp.true, sp.false):
+        return value
     # Keep integers intact and respect the precision of explicit approx(...) values.
     if isinstance(value, (sp.Integer, sp.Float)) or value is sp.I:
         return value
@@ -380,12 +396,16 @@ BASE_LITERAL = re.compile(r"(?<!\w)0([bBhHoO])([^\W_]*(?:_[^\W_]+)*)", re.UNICOD
 TOKEN = re.compile(rf"(?P<number>{DIGITS}/{DIGITS}(?=_°?[^\W\d_])|"
                    rf"(?:{DIGITS}(?:\.(?:{DIGITS})?)?|\.{DIGITS})(?:[eE][+-]?{DIGITS})?)|"
                    r"(?P<unit>_°?[^\W\d_][^\W_]*)|(?P<name>[^\W\d_][^\W_]*)|"
-                   r"(?P<op>\*\*|[+\-*/^%(),!\[\]])", re.UNICODE)
-RESERVED = {"pi": sp.pi, "π": sp.pi, "e": sp.E, "E": sp.E, "i": sp.I, "I": sp.I}
+                   r"(?P<op>\*\*|<=|>=|==|!=|[<>=+\-*/^%(),!\[\]])", re.UNICODE)
+COMPARISONS = {"<": sp.Lt, ">": sp.Gt, "<=": sp.Le, ">=": sp.Ge,
+               "=": sp.Eq, "==": sp.Eq, "!=": sp.Ne}
+RESERVED = {"pi": sp.pi, "π": sp.pi, "e": sp.E, "E": sp.E, "i": sp.I, "I": sp.I,
+            "True": sp.true, "False": sp.false}
 FUNCTIONS = {"sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "sqrt", "cbrt",
              "exp", "ln", "log", "abs", "floor", "ceil", "factorial", "simplify", "expand", "factor",
              "diff", "integrate", "solve", "subs", "approx", "min", "max"}
-TRANSLATE = str.maketrans({"→": "->", "⇒": "=>", "×": "*", "÷": "/", "−": "-", "²": "^2", "³": "^3"})
+TRANSLATE = str.maketrans({"→": "->", "⇒": "=>", "×": "*", "÷": "/", "−": "-", "²": "^2", "³": "^3",
+                           "≤": "<=", "≥": ">=", "≠": "!="})
 
 
 def normalize_input(text):
@@ -519,6 +539,8 @@ class Parser:
             if kind == "unit" and minimum <= 40:
                 self.take()
                 unit = self.calculator.registry.get(token)
+                if not isinstance(left.value, sp.Expr):
+                    raise CalcError("A unit suffix requires a scalar expression.")
                 if left.dims != ZERO:
                     raise CalcError("Use * or / between units, for example 3_m/_s.")
                 if self.peek()[1] in ("^", "**"):
@@ -534,6 +556,17 @@ class Parser:
             if token == "!" and minimum <= 40:
                 self.take()
                 left = self.calculator.function("factorial", [left])
+                continue
+            if token in COMPARISONS and minimum <= 5 and not self.unit_only:
+                # Compare adjacent operands in a chain, after all arithmetic.
+                previous = left
+                result = sp.true
+                while self.peek()[1] in COMPARISONS:
+                    op = self.take()[1]
+                    right = self.expression(6)
+                    result = sp.And(result, previous.compare(op, right).value)
+                    previous = right
+                left = Quantity(result)
                 continue
             precedence = {"+": 10, "-": 10, "*": 20, "/": 20, "%": 20, "^": 30, "**": 30}.get(token)
             implicit = False
@@ -627,6 +660,8 @@ class Calculator:
                 raise CalcError("Use one conversion arrow per calculation.")
             expression, target_text = (part.strip() for part in text.split("=>"))
             value = self.parse(expression)
+            if not isinstance(value.value, sp.Expr):
+                raise CalcError("Unit conversion requires a scalar expression.")
             # A simple offset target must be handled before compound-unit parsing.
             if re.fullmatch(r"_°?[^\W\d_][^\W_]*", target_text):
                 target = self.registry.get(target_text)
@@ -680,7 +715,7 @@ class Calculator:
         if (accepted is None and not args) or (accepted is not None and len(args) not in accepted):
             raise CalcError(f"Wrong number of arguments for {name}.")
         if any(not isinstance(a.value, sp.Expr) for a in args):
-            raise CalcError(f"{name} requires scalar arguments, rather than a solution list.")
+            raise CalcError(f"{name} requires scalar arguments.")
         first = args[0]
         if name in ("simplify", "expand", "factor", "abs"):
             fn = sp.Abs if name == "abs" else getattr(sp, name)
@@ -872,6 +907,7 @@ HELP_LINES = [
     "Type in a menu to filter; Backspace removes a filter character.",
     "Submenus: Enter/Right opens; Left/Esc returns to the parent menu.",
     "3->x assigns x; x/X differ; _ft/_FT are the same unit.",
+    "Comparisons: < > <= >= = == != return True or False; 3>6 is False.",
     "3_in=>_ft converts; 3_m/_s=>_kph; 2_m^2 is 2 square meters.",
     ":unit smoot = 1.7018_m    :mode degree    :precision 100",
     ":format exact|approximate sets default output; :precision sets decimal digits.",

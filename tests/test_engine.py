@@ -123,6 +123,62 @@ class ExactArithmeticTests(unittest.TestCase):
         self.calc.evaluate("0.1->ε")
         self.assertEqual(self.calc.evaluate("3*ε").value, sp.Rational(3, 10))
 
+    def test_comparison_operators(self):
+        for source, expected in {
+            "3>6": "False", "6>3": "True", "3<6": "True", "6<3": "False",
+            "3>=3": "True", "3>=6": "False", "3<=3": "True", "6<=3": "False",
+            "3=3": "True", "3=6": "False", "3==3": "True", "3==6": "False",
+            "3!=6": "True", "3!=3": "False", "3≤6": "True", "6≥3": "True",
+            "3≠6": "True", "0.1+0.2==0.3": "True", "sqrt(2)^2=2": "True",
+            "i!=0": "True", "i==i": "True", "0hFF>0b10": "True",
+        }.items():
+            with self.subTest(source=source):
+                self.assertEqual(self.calc.calculate(source), expected)
+                self.assertEqual(self.calc.answer.dims, ZERO)
+                self.assertIs(self.calc.answer.value, sp.true if expected == "True" else sp.false)
+
+    def test_comparison_precedence_and_chaining(self):
+        for source, expected in {
+            "2+3*4>10+3": "True", "-2^2 < -3": "True", "3! != 5": "True",
+            "3! == 6": "True", "2(3+4)<=14": "True", "1<2<=2!=3": "True",
+            "3>2>1": "True", "3<2<1": "False", "1<3<2": "False",
+            "1=1==1": "True", "(3>6)==False": "True",
+        }.items():
+            with self.subTest(source=source):
+                self.assertEqual(self.calc.calculate(source), expected)
+
+    def test_comparisons_with_units(self):
+        for source, expected in {
+            "1_m == 100_cm": "True", "1_ft<1_m": "True", "2_m>=3_m": "False",
+            "32_°F=0_°C": "True", "0_°C<40_°F": "True", "1_m!=1_ft": "True",
+            "1_m<150_cm<2_m": "True",
+        }.items():
+            with self.subTest(source=source):
+                self.assertEqual(self.calc.calculate(source), expected)
+
+    def test_booleans_in_history_assignment_ans_and_approximate_output(self):
+        self.assertEqual(self.calc.calculate("3>6->flag"), "False")
+        self.assertEqual(self.calc.history[-1].line, "3>6->flag = False")
+        self.assertEqual(self.calc.calculate("ans==False"), "True")
+        self.assertEqual(self.calc.calculate("flag"), "False")
+        self.assertEqual(self.calc.calculate(self.calc.history[-1].result), "False")
+        self.calc.set_output_mode("approximate")
+        self.assertEqual(self.calc.calculate("1/3<1/2"), "True")
+        self.assertEqual(self.calc.calculate("ans"), "True")
+        self.assertEqual(self.calc.calculate("False"), "False")
+
+    def test_invalid_comparisons_preserve_state(self):
+        self.calc.evaluate("3->x")
+        for source in ["1_m<1_s", "1_m=1", "1_m!=1_s", "y<3", "y=3", "i>0",
+                       "[1,2]==[1,2]", "True<False", "3>", "3===3", "3! = =6",
+                       "(3>6)+1", "-True", "True_m", "True=>1", "3->True",
+                       "sin(3>6)", "3<1/0", "1_m>2_s->x"]:
+            with self.subTest(source=source), self.assertRaises(CalcError):
+                self.calc.evaluate(source)
+            self.assertEqual(self.calc.answer.value, 3)
+            self.assertEqual(self.calc.variables["x"].value, 3)
+        self.assertEqual(self.calc.calculate("y=y"), "True")
+
     def test_unicode_operators(self):
         self.assertEqual(self.calc.calculate("3→x"), "3")
         self.assertEqual(self.calc.calculate("3_in⇒_ft"), "1/4_ft")
