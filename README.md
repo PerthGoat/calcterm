@@ -45,6 +45,9 @@ In a dropdown, use Up/Down and Enter to choose an item. Type to filter its label
 Backspace edits the filter. In F2, choose a unit category with Enter or Right, then
 choose its unit with Enter. Left or Esc returns to the category list; Esc again
 closes it. Filtering the category list also searches the units inside each category.
+Right on a unit switches to F3 Constants, clearing the submenu and filter; this
+also works when the submenu filter has no matches. In any menu, Right opens a
+selected submenu when available, or otherwise switches to the next top menu.
 Submenus appear beside their parent when space permits, or over it in narrow terminals.
 F4 includes ε, μ, Ω, π, other Greek letters, °, Å, and
 arrows. Selection inserts the symbol at the input cursor. Terminal size must be at

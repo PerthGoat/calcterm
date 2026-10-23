@@ -905,7 +905,7 @@ HELP_LINES = [
     "Esc: close menu or return to input; Ctrl+C / Ctrl+D: quit; Ctrl+L: redraw.",
     "F1-F6: menus; Up/Down or PageUp/PageDown: select; Enter: choose.",
     "Type in a menu to filter; Backspace removes a filter character.",
-    "Submenus: Enter/Right opens; Left/Esc returns to the parent menu.",
+    "Submenus: Enter/Right opens; Right on a leaf switches menus; Left/Esc goes back.",
     "3->x assigns x; x/X differ; _ft/_FT are the same unit.",
     "Comparisons: < > <= >= = == != return True or False; 3>6 is False.",
     "3_in=>_ft converts; 3_m/_s=>_kph; 2_m^2 is 2 square meters.",
@@ -1195,7 +1195,7 @@ class ConsoleApp:
                 self.open_menu = None
             elif key == "RIGHT" and items and "items" in items[self.menu_index]:
                 self.open_submenu(items[self.menu_index])
-            elif key in ("LEFT", "RIGHT") and not self.menu_stack:
+            elif key in ("LEFT", "RIGHT"):
                 self.open_menu = (self.open_menu + (1 if key == "RIGHT" else -1)) % 6
                 self.menu_index = 0
                 self.menu_filter = ""

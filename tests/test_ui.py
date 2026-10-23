@@ -501,13 +501,30 @@ class ConsoleTests(unittest.TestCase):
         self.assertEqual(len(self.app.menu_stack), 1)
         self.assertEqual(self.app.menu_filter, "")
         self.type_keys("foot")
-        self.app.handle_key("RIGHT")  # A leaf has no further submenu.
-        self.assertEqual(self.app.open_menu, 1)
         self.app.handle_key("ENTER")
         self.assertEqual(self.app.text, "(_ft)+1")
         self.assertEqual(self.app.cursor, 4)
         self.assertIsNone(self.app.open_menu)
         self.assertFalse(self.app.menu_stack)
+
+    def test_right_from_unit_submenu_switches_to_constants(self):
+        self.app.text, self.app.cursor = "()+1", 1
+        for unit_filter in ("foot", "xxxxx"):
+            with self.subTest(unit_filter=unit_filter):
+                self.app.handle_key("F2")
+                self.type_keys("length")
+                self.app.handle_key("ENTER")
+                self.type_keys(unit_filter)
+                self.assertEqual(len(self.app.menu_stack), 1)
+                self.assertEqual(bool(self.app.menu_items()), unit_filter == "foot")
+                self.app.handle_key("RIGHT")
+                self.assertEqual(self.app.open_menu, 2)
+                self.assertFalse(self.app.menu_stack)
+                self.assertEqual(self.app.menu_filter, "")
+                self.assertEqual(self.app.menu_index, 0)
+                self.assertEqual(self.app.menu_items(), self.app.menus[2]["items"])
+                self.assertEqual(self.app.text, "()+1")
+                self.assertEqual(self.app.cursor, 1)
 
     def test_submenu_back_restores_parent_selection_and_filter(self):
         self.app.handle_key("F2")
