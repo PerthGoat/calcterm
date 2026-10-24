@@ -992,6 +992,49 @@ def cleanup_menu():
             command_item("Clear history", ":clear")]}
 
 
+def catalog_items(calculator, menus):
+    """Build insertion choices from the parser's allowlists and current registry."""
+    signatures = {"approx": "expression[, digits]", "diff": "expression, variable[, order]",
+                  "integrate": "expression, variable[, lower, upper]", "solve": "expression, variable",
+                  "subs": "expression, variable, value", "log": "x[, base]", "min": "x, ...", "max": "x, ..."}
+    entries = {name + "(": insert_item(f"{name}({signatures.get(name, 'x')}) - function", name + "(")
+               for name in FUNCTIONS}
+    for name in EQUATION_NAMES:
+        description = calculator.equations.get(name, "undefined; set in F7")
+        entries[name + "("] = insert_item(f"{name}(x) - {description}", name + "(")
+    for symbol, label in SYMBOLS:
+        entries[symbol] = insert_item(f"{label} ({symbol}) - symbol", symbol)
+    for symbol in map(chr, TRANSLATE):
+        entries.setdefault(symbol, insert_item(f"{unicodedata.name(symbol).lower()} ({symbol}) - symbol", symbol))
+    for name in (*RESERVED, "ans"):
+        entries.setdefault(name, insert_item(name + " - built-in value", name))
+    operators = {"+": "addition", "-": "subtraction", "*": "multiplication", "/": "division",
+                 "^": "power", "**": "power (alternate)", "%": "remainder", "!": "factorial suffix",
+                 "&": "bitwise AND", "|": "bitwise OR", "xor": "bitwise XOR", "~": "bitwise NOT",
+                 "<<": "shift left", ">>": "shift right", "<": "less than", ">": "greater than",
+                 "<=": "less than or equal", ">=": "greater than or equal", "=": "equality",
+                 "==": "equality (alternate)", "!=": "not equal", "->": "assignment", "=>": "conversion",
+                 "(": "parenthesis open", ")": "parenthesis close", "[": "list open", "]": "list close",
+                 ",": "argument separator"}
+    for symbol, label in operators.items():
+        entries[symbol] = insert_item(f"{label} ({symbol}) - operator", symbol)
+    for unit in calculator.registry.units.values():
+        kind = "constant" if unit.constant else "unit"
+        entries[unit.notation] = insert_item(f"{unit.label} ({unit.notation}) - {kind}", unit.notation)
+
+    def custom_symbols(items):
+        for item in items:
+            if "items" in item:
+                custom_symbols(item["items"])
+            symbol = item.get("insert", "")
+            if len(symbol) == 1 and symbol.isprintable() and not symbol.isspace():
+                entries.setdefault(symbol, insert_item(item["label"] + " - symbol", symbol))
+
+    for menu in menus:
+        custom_symbols(menu["items"])
+    return sorted(entries.values(), key=lambda item: (item["label"].casefold(), item["label"]))
+
+
 def default_menus(registry):
     # Build F1-F6 from the current registry, including any loaded custom units.
     units = sorted((u for u in registry.units.values() if not u.constant), key=lambda u: (u.category, u.name))
@@ -1011,7 +1054,7 @@ def default_menus(registry):
          insert_item("Set precision", ":precision 100"), insert_item("Rename a menu", ":menu 1 Math"),
          insert_item("Add menu item", ":menuadd 1 Square | ^2"), command_item("Save configuration", ":save"),
          command_item("Quit", ":quit")]},
-        {"label": "Help", "items": [command_item("Keyboard help", ":help"),
+        {"label": "Help", "items": [command_item("Keyboard help", ":help"), command_item("Catalog", ":catalog"),
          insert_item("Exact decimal example", "0.1 + 0.2"), insert_item("Conversion example", "3_in=>_ft"),
          insert_item("Assignment example", "3->x"), insert_item("Symbolic example", "expand((y+1)^2)"),
          insert_item("Derivative example", "diff(y^3,y)"), insert_item("Custom unit example", ":unit smoot = 1.7018_m")]},
@@ -1063,6 +1106,7 @@ HELP_LINES = [
     "Ctrl+T in F7: check/uncheck a formula for the F8 table; new formulas are checked.",
     "F8: table; Tab: set start/step; Enter: apply; arrows/PageUp/PageDown: scroll.",
     "F9 Clean Up: clear set variables or the current Problem's history.",
+    "F6 > Catalog: all functions/symbols; type to filter; Enter inserts; Esc closes.",
     "Type in a menu to filter; Backspace removes a filter character.",
     "Submenus: Enter/Right opens; Right on a leaf switches menus; Left/Esc goes back.",
     "3->x assigns x; x/X differ; _ft/_FT are the same unit.",
@@ -1097,6 +1141,11 @@ class ConsoleApp:
         self.problem_dialog_index = 0
         self.problem_delete_name = ""
         self.problem_delete_confirm = False
+        self.catalog_open = False
+        self.catalog_entries: list[dict[str, str]] = []
+        self.catalog_filter = ""
+        self.catalog_index = 0
+        self.catalog_rows = 15
         self._saved_history: tuple[HistoryEntry, ...] = ()
         self.menus = default_menus(self.calculator.registry)
         # Editing and history selection are separate: browsing must not move the cursor.
@@ -1251,6 +1300,7 @@ class ConsoleApp:
         self.text, self.cursor = "", 0
         self.history_index, self.history_start = None, 0
         self.equation_open, self.table_open, self.help_open = False, False, False
+        self.catalog_open = False
         self.equation_index, self.table_row, self.table_column = 0, 0, 0
         self.table_edit_field = None
         self.open_menu = None
@@ -1392,6 +1442,8 @@ class ConsoleApp:
                 menus[4]["items"].append(problem_menu())
             # Older settings included the built-in history action under Options.
             menus[4]["items"] = [item for item in menus[4]["items"] if item.get("command") != ":clear"]
+            if not any(item.get("command") == ":catalog" for item in menus[5]["items"]):
+                menus[5]["items"].append(command_item("Catalog", ":catalog"))
             self.calculator = calculator
             self.history_insert = recall
             self.menus = menus
@@ -1479,6 +1531,8 @@ class ConsoleApp:
             self.running = False
         elif name == ":help":
             self.help_open = True
+        elif name == ":catalog":
+            self.open_catalog()
         elif name == ":problem":
             action, _, problem_name = arg.partition(" ")
             if action not in ("new", "open", "delete"):
@@ -1580,6 +1634,9 @@ class ConsoleApp:
             return
         if self.problem_dialog is not None:
             self.handle_problem_key(key)
+            return
+        if self.catalog_open:
+            self.handle_catalog_key(key)
             return
         if key == "F8":
             if self.equation_open and not self.commit_equation():
@@ -1939,6 +1996,76 @@ class ConsoleApp:
                   self.message]
         return [clip(line, width) for line in lines], {}, cursor
 
+    def open_catalog(self):
+        if self.equation_open and not self.commit_equation():
+            return
+        if self.table_edit_field is not None and not self.commit_table_settings():
+            return
+        self.catalog_entries = catalog_items(self.calculator, self.menus)
+        self.catalog_filter, self.catalog_index = "", 0
+        self.catalog_open = True
+        self.open_menu = None
+        self.menu_stack.clear()
+        self.equation_open, self.table_open, self.help_open = False, False, False
+        self.message = "Catalog | Type: filter | Up/Down or PageUp/PageDown: scroll | Enter: insert | Esc: close"
+
+    def catalog_matches(self) -> list[dict[str, str]]:
+        query = self.catalog_filter.casefold()
+        return [item for item in self.catalog_entries
+                if query in item["label"].casefold() or query in item["insert"].casefold()]
+
+    def handle_catalog_key(self, key):
+        items = self.catalog_matches()
+        if key in ("ESC", "F6"):
+            self.catalog_open = False
+            self.message = "Catalog closed."
+        elif key in ("UP", "DOWN", "PAGEUP", "PAGEDOWN", "HOME", "END"):
+            if key in ("HOME", "END"):
+                self.catalog_index = 0 if key == "HOME" else max(0, len(items) - 1)
+            else:
+                delta = {"UP": -1, "DOWN": 1, "PAGEUP": -self.catalog_rows, "PAGEDOWN": self.catalog_rows}[key]
+                self.catalog_index = max(0, min(len(items) - 1, self.catalog_index + delta))
+        elif key == "ENTER" and items:
+            item = items[min(self.catalog_index, len(items) - 1)]
+            self.insert(item["insert"])
+            self.catalog_open = False
+            self.message = "Inserted " + item["insert"] + " from Catalog."
+        elif key in ("BACKSPACE", "CTRL_U"):
+            self.catalog_filter = self.catalog_filter[:-1] if key == "BACKSPACE" else ""
+            self.catalog_index = 0
+        elif len(key) == 1 and key.isprintable():
+            self.catalog_filter += key
+            self.catalog_index = 0
+
+    def catalog_frame(self, lines, width, height):
+        # Use nearly the whole terminal while retaining a centered modal border.
+        box_width = min(width - 4, 100, max(36, width * 4 // 5))
+        self.catalog_rows = max(1, height - 9)
+        items = self.catalog_matches()
+        self.catalog_index = min(self.catalog_index, max(0, len(items) - 1))
+        first = max(0, self.catalog_index - self.catalog_rows + 1)
+
+        def row(text):
+            text = clip(text, box_width - 2)
+            return "|" + text + " " * (box_width - 2 - display_width(text)) + "|"
+
+        border = "+" + "-" * (box_width - 2) + "+"
+        panel = [border, row(" Catalog"), row(" Find: " + self.catalog_filter)]
+        for offset in range(self.catalog_rows):
+            index = first + offset
+            if index < len(items):
+                panel.append(row(("> " if index == self.catalog_index else "  ") + items[index]["label"]))
+            else:
+                panel.append(row("  (no matches)" if not items and offset == 0 else ""))
+        position = self.catalog_index + 1 if items else 0
+        panel += [row(f" {position}/{len(items)} | Enter: insert | Esc: close"), border]
+        top, left = (height - len(panel)) // 2, (width - box_width) // 2
+        for index, content in enumerate(panel, top):
+            background = lines[index].ljust(width)
+            lines[index] = background[:left] + content + background[left + box_width:]
+        selected = {top + 3 + self.catalog_index - first: (left + 1, left + box_width - 1)} if items else {}
+        return lines, selected, None
+
     def begin_problem_dialog(self, action, name=""):
         if action == "delete" and name:
             if name == "Default" or name not in self.problems:
@@ -1953,6 +2080,7 @@ class ConsoleApp:
         self.open_menu = None
         self.menu_stack.clear()
         self.equation_open, self.table_open, self.help_open = False, False, False
+        self.catalog_open = False
         self.message = "Enter: choose | Esc: cancel"
 
     def problem_choices(self) -> list[str]:
@@ -2214,6 +2342,8 @@ class ConsoleApp:
             cursor = None
         if self.problem_dialog is not None:
             lines, selected, cursor = self.problem_dialog_frame(lines, width, height)
+        elif self.catalog_open:
+            lines, selected, cursor = self.catalog_frame(lines, width, height)
         lines = [clip(line, width) for line in lines]
         selected = {row: (first, min(last, len(lines[row]))) for row, (first, last) in selected.items()
                     if first < len(lines[row])}

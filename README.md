@@ -64,6 +64,15 @@ Both actions preserve equations and `ans`. Clear history has moved out of Option
 older saved Options menus are updated when loaded. F9 is a built-in menu; the six
 F1–F6 menus keep their existing configuration format.
 
+**F6 Help → Catalog** opens a large, centered popup with an alphabetical list of
+every built-in function, y1–y99 equation slots, symbols, operators, built-in values,
+physical constants, and units (including custom units). Custom single-character
+symbols added to menus also appear. Function entries show their argument forms.
+Type to filter by name or notation; Backspace edits the filter and Ctrl+U clears it.
+Use Up/Down, PageUp/PageDown, or Home/End to browse. Enter inserts the selection at
+the calculator cursor, using `name(` for a function. Esc closes the Catalog and keeps
+your input untouched. Catalog is also available through the interactive `:catalog` command.
+
 The history limit is **at least 30 calculations, including errors**, increasing to the
 number of visible history rows in taller terminals. The panel fills the space
 between the menu and input line. Resizing the terminal updates the panel immediately,
