@@ -687,6 +687,7 @@ class Calculator:
         self.registry = UnitRegistry()
         self.variables = {}
         self.equations = {}
+        self.unchecked_equations: set[str] = set()
         self.history = deque(maxlen=30)
         self.answer = Quantity(sp.S.Zero)
         self.unit_definitions = {}
@@ -802,11 +803,14 @@ class Calculator:
         expression = expression.strip()
         if not expression:
             self.equations.pop(name, None)
+            self.unchecked_equations.discard(name)
             return
         value = self.parse(expression, local_variables={"x": Quantity(sp.Symbol("x"))},
                            validating_equation=True)
         if not isinstance(value.value, sp.Expr):
             raise CalcError("An equation must produce a scalar expression.")
+        if self.equations.get(name) != expression:
+            self.unchecked_equations.discard(name)
         self.equations[name] = expression
 
     def equation(self, name, args, stack=(), validating=False):
@@ -1045,6 +1049,8 @@ HELP_LINES = [
     "F1-F6: menus; Up/Down or PageUp/PageDown: select; Enter: choose.",
     "F7: equations y1-y99; Enter saves; Up/Down selects; Esc cancels current edit.",
     "Enter 4x for y1(x); return with F7 and calculate y1(3) to get 12.",
+    "Ctrl+T in F7: check/uncheck a formula for the F8 table; new formulas are checked.",
+    "F8: table; Tab: set start/step; Enter: apply; arrows/PageUp/PageDown: scroll.",
     "Type in a menu to filter; Backspace removes a filter character.",
     "Submenus: Enter/Right opens; Right on a leaf switches menus; Left/Esc goes back.",
     "3->x assigns x; x/X differ; _ft/_FT are the same unit.",
@@ -1087,7 +1093,15 @@ class ConsoleApp:
         self.equation_index = 0
         self.equation_text = ""
         self.equation_cursor = 0
-        self.message = "F7: equations | F6: help | Enter: calculate | Up: history | :quit: exit"
+        self.table_open = False
+        self.table_start = "0"
+        self.table_step = "1"
+        self.table_row = 0
+        self.table_column = 0
+        self.table_edit_field: int | None = None
+        self.table_fields = ["0", "1"]
+        self.table_cursor = 0
+        self.message = "F7: equations | F8: table | F6: help | Enter: calculate | :quit: exit"
         self.help_open = False
         self.running = True
         self._load_config()
@@ -1170,6 +1184,16 @@ class ConsoleApp:
                 raise CalcError("equations must be an object mapping y1-y99 to expressions.")
             for name, expression in equations.items():
                 calculator.define_equation(name, expression)
+            unchecked = data.get("unchecked_equations", [])
+            if not isinstance(unchecked, list) or any(
+                not isinstance(name, str) or name not in calculator.equations for name in unchecked
+            ):
+                raise CalcError("unchecked_equations must list defined equation names.")
+            calculator.unchecked_equations = set(unchecked)
+            table = data.get("table", {})
+            if not isinstance(table, dict):
+                raise CalcError("table must be an object with start and step expressions.")
+            start, step = self.validate_table_settings(calculator, table.get("start", "0"), table.get("step", "1"))
             menus = validate_menus(data["menus"]) if "menus" in data else default_menus(calculator.registry)
             if "menus" in data and not any("items" in item for item in menus[1]["items"]):
                 menus[1]["items"] = categorize_unit_items(calculator.registry, menus[1]["items"])
@@ -1180,6 +1204,7 @@ class ConsoleApp:
             self.calculator = calculator
             self.history_insert = recall
             self.menus = menus
+            self.table_start, self.table_step = start, step
         except (OSError, ValueError, TypeError) as exc:
             # Invalid files never partially replace the live state.
             self.message = f"Config error: {exc} (using defaults; original file preserved)"
@@ -1191,6 +1216,9 @@ class ConsoleApp:
                 "output_mode": self.calculator.output_mode,
                 "history_insert": self.history_insert, "units": self.calculator.unit_definitions,
                 "equations": self.calculator.equations,
+                "unchecked_equations": sorted(self.calculator.unchecked_equations,
+                                              key=EQUATION_NAMES.index),
+                "table": {"start": self.table_start, "step": self.table_step},
                 "menus": self.menus}
         temporary = self.config_path.with_name(self.config_path.name + ".tmp")
         try:
@@ -1342,7 +1370,22 @@ class ConsoleApp:
         if key in ("CTRL_C", "CTRL_D"):
             self.running = False
             return
+        if key == "F8":
+            if self.equation_open and not self.commit_equation():
+                return
+            if self.table_edit_field is not None and not self.commit_table_settings():
+                return
+            self.equation_open = False
+            self.open_menu = None
+            self.menu_stack.clear()
+            self.help_open = False
+            self.table_open = not self.table_open
+            self.message = "Tab: start/step | Arrows: scroll | F7: equations | F8/Esc: close | :save keeps settings"
+            return
         if key == "F7":
+            if self.table_edit_field is not None and not self.commit_table_settings():
+                return
+            self.table_open = False
             if self.equation_open:
                 if self.commit_equation():
                     self.equation_open = False
@@ -1354,6 +1397,9 @@ class ConsoleApp:
                 self.load_equation()
             return
         if key.startswith("F") and key[1:].isdigit() and 1 <= int(key[1:]) <= 6:
+            if self.table_edit_field is not None and not self.commit_table_settings():
+                return
+            self.table_open = False
             if self.equation_open:
                 if not self.commit_equation():
                     return
@@ -1367,6 +1413,9 @@ class ConsoleApp:
             return
         if self.equation_open:
             self.handle_equation_key(key)
+            return
+        if self.table_open:
+            self.handle_table_key(key)
             return
         if self.help_open:
             if key in ("ESC", "ENTER", "TAB"):
@@ -1464,7 +1513,7 @@ class ConsoleApp:
         name = EQUATION_NAMES[self.equation_index]
         self.equation_text = self.calculator.equations.get(name, "")
         self.equation_cursor = len(self.equation_text)
-        self.message = "Enter/Up/Down: save and select | F7: save and close | Esc: cancel edit | :save keeps equations"
+        self.message = "Ctrl+T: check/uncheck | F8: table | Enter: save/next | F7: save/close | Esc: cancel"
 
     def commit_equation(self):
         name = EQUATION_NAMES[self.equation_index]
@@ -1477,7 +1526,19 @@ class ConsoleApp:
         return True
 
     def handle_equation_key(self, key):
-        if key == "ESC":
+        if key == "CTRL_T":
+            if self.commit_equation():
+                name = EQUATION_NAMES[self.equation_index]
+                if name in self.calculator.equations:
+                    unchecked = self.calculator.unchecked_equations
+                    if name in unchecked:
+                        unchecked.remove(name)
+                    else:
+                        unchecked.add(name)
+                    self.message = f"{name}: {'unchecked' if name in unchecked else 'checked'} for F8 table | :save to keep"
+                else:
+                    self.message = "Enter an equation before checking it for the table."
+        elif key == "ESC":
             self.equation_open = False
             self.message = "Equation editor closed; current edit canceled. Use :save to keep saved equations."
         elif key in ("UP", "DOWN", "PAGEUP", "PAGEDOWN", "ENTER", "TAB"):
@@ -1521,7 +1582,9 @@ class ConsoleApp:
             name = EQUATION_NAMES[index]
             active = index == self.equation_index
             expression = self.equation_text if active else self.calculator.equations.get(name, "")
-            line = ("> " if active else "  ") + f"{name}(x)=" + expression
+            changed = active and expression.strip() != self.calculator.equations.get(name, "")
+            checked = bool(expression.strip()) and (changed or name not in self.calculator.unchecked_equations)
+            line = ("> " if active else "  ") + ("[✓] " if checked else "[ ] ") + f"{name}=" + expression
             if active:
                 selected[len(lines)] = (0, len(line))
             lines.append(line)
@@ -1532,11 +1595,136 @@ class ConsoleApp:
             start += 1
         lines += ["-" * width, prefix + self.equation_text[start:]]
         cursor = (height - 2, display_width(prefix + self.equation_text[start:self.equation_cursor]) + 1)
-        lines += [f" Equation {self.equation_index + 1}/99 | Up/Down: select | Ctrl+U: clear",
+        lines += [f" Equation {self.equation_index + 1}/99 | Ctrl+T: check/uncheck | F8: table",
                   self.message]
         lines = [clip(line, width) for line in lines]
         selected = {row: (begin, min(end, len(lines[row]))) for row, (begin, end) in selected.items()}
         return lines, selected, cursor
+
+    @staticmethod
+    def validate_table_settings(calculator, start, step) -> tuple[str, str]:
+        values = []
+        for label, source in (("Start", start), ("Step", step)):
+            if not isinstance(source, str):
+                raise CalcError(f"Table {label.lower()} must be a numeric expression.")
+            value = calculator.parse(source)
+            if (not isinstance(value.value, sp.Expr) or value.dims != ZERO
+                    or value.value.is_number is not True or value.value.is_real is not True
+                    or sp.ask(sp.Q.finite(value.value)) is not True):
+                raise CalcError(f"Table {label.lower()} must be a finite real number without units.")
+            if label == "Step" and value.value == 0:
+                raise CalcError("Table step cannot be zero.")
+            values.append(expression_text(value.value))
+        return values[0], values[1]
+
+    def commit_table_settings(self):
+        try:
+            start, step = self.validate_table_settings(self.calculator, *self.table_fields)
+        except CalcError as exc:
+            self.message = "Error: " + str(exc)
+            return False
+        self.table_start, self.table_step = start, step
+        self.table_row = 0
+        self.table_edit_field = None
+        self.message = "Table settings applied | Tab: start/step | :save to keep settings"
+        return True
+
+    def table_equation_names(self) -> list[str]:
+        return [name for name in EQUATION_NAMES if name in self.calculator.equations
+                and name not in self.calculator.unchecked_equations]
+
+    def handle_table_key(self, key):
+        field = self.table_edit_field
+        if field is None:
+            if key == "ESC":
+                self.table_open = False
+            elif key == "TAB":
+                self.table_fields = [self.table_start, self.table_step]
+                self.table_edit_field = 0
+                self.table_cursor = len(self.table_fields[0])
+                self.message = "Start/Step: Tab switches fields | Enter: apply | Esc: cancel | Ctrl+U: clear"
+            elif key in ("UP", "DOWN", "PAGEUP", "PAGEDOWN"):
+                self.table_row += {"UP": -1, "DOWN": 1, "PAGEUP": -max(1, self.history_rows - 2),
+                                   "PAGEDOWN": max(1, self.history_rows - 2)}[key]
+            elif key in ("LEFT", "RIGHT"):
+                self.table_column = max(0, min(max(0, len(self.table_equation_names()) - 1),
+                                              self.table_column + (-1 if key == "LEFT" else 1)))
+            elif key == "HOME":
+                self.table_row, self.table_column = 0, 0
+            return
+        text, position = self.table_fields[field], self.table_cursor
+        if key == "ESC":
+            self.table_edit_field = None
+            self.message = "Table setup canceled | Tab: start/step | F8/Esc: close"
+        elif key == "ENTER":
+            self.commit_table_settings()
+        elif key in ("TAB", "UP", "DOWN"):
+            self.table_edit_field = 1 - field
+            self.table_cursor = len(self.table_fields[1 - field])
+        elif key == "LEFT":
+            self.table_cursor = max(0, position - 1)
+        elif key == "RIGHT":
+            self.table_cursor = min(len(text), position + 1)
+        elif key == "HOME":
+            self.table_cursor = 0
+        elif key == "END":
+            self.table_cursor = len(text)
+        elif key == "CTRL_U":
+            self.table_fields[field], self.table_cursor = "", 0
+        elif key == "BACKSPACE" and position:
+            self.table_fields[field] = text[:position - 1] + text[position:]
+            self.table_cursor -= 1
+        elif key == "DELETE":
+            self.table_fields[field] = text[:position] + text[position + 1:]
+        elif len(key) == 1 and key.isprintable():
+            self.table_fields[field] = text[:position] + key + text[position:]
+            self.table_cursor += 1
+
+    def table_frame(self, width, height, menu_title):
+        column_width = min(18, max(10, (width - 12) // 5))
+        capacity = max(1, (width + 3) // (column_width + 3) - 1)
+        names = self.table_equation_names()
+        self.table_column = min(self.table_column, max(0, len(names) - capacity))
+        visible = names[self.table_column:self.table_column + capacity]
+
+        def row(cells):
+            clipped = [clip(cell, column_width) for cell in cells]
+            return " | ".join(cell + " " * (column_width - display_width(cell)) for cell in clipped)
+
+        lines = [menu_title, f"Table | Start={self.table_start} | Step={self.table_step}",
+                 row(["x"] + visible), "-" * width]
+        start = self.calculator.parse(self.table_start)
+        step = self.calculator.parse(self.table_step)
+        for offset in range(height - 8):
+            if not names:
+                lines.append("Check equations in F7 (Ctrl+T)." if offset == 0 else "")
+                continue
+            argument = start.arithmetic("+", step.arithmetic("*", Quantity(sp.Integer(self.table_row + offset))))
+            cells = [self.calculator.format(argument)]
+            for name in visible:
+                try:
+                    cells.append(self.calculator.format(self.calculator.equation(name, [argument])))
+                except CalcError:
+                    cells.append("Error")
+            lines.append(row(cells))
+        lines.append("-" * width)
+        cursor = None
+        field = self.table_edit_field
+        if field is not None:
+            prefix = ("Start", "Step")[field] + "="
+            text = self.table_fields[field]
+            available = width - len(prefix) - 1
+            first = max(0, self.table_cursor - available + 1)
+            while display_width(text[first:self.table_cursor]) >= available:
+                first += 1
+            lines.append(prefix + text[first:])
+            cursor = (height - 2, len(prefix) + display_width(text[first:self.table_cursor]) + 1)
+        else:
+            lines.append("Tab: start/step | F7: equations | F8: close")
+        first_column = self.table_column + 1 if names else 0
+        lines += [f" Row {self.table_row} | equations {first_column}-{self.table_column + len(visible)}/{len(names)} | arrows: scroll | Home: reset",
+                  self.message]
+        return [clip(line, width) for line in lines], {}, cursor
 
     def frame(self, width=100, height=24):
         """Return plain text lines, selected character spans by row, and input cursor."""
@@ -1557,14 +1745,20 @@ class ConsoleApp:
         if width < 40 or height < 12:
             lines = ["Please resize the terminal to at least 40 columns and 12 rows.", self.message]
             return [clip(line, width) for line in lines[:height]], {}, None
-        label_width = max(1, (width - 33) // 7)
+        label_width = max(1, (width - 38) // 8)
         menu_titles = [f"F{i + 1} {menu['label']}" for i, menu in enumerate(self.menus)]
         menu_titles.append("F7 Equations")
+        menu_titles.append("F8 Table")
         if display_width("  ".join(menu_titles)) > width:
             menu_titles = [f"F{i + 1} {clip(menu['label'], label_width)}" for i, menu in enumerate(self.menus)]
             menu_titles.append("F7 " + clip("Equations", label_width))
+            menu_titles.append("F8 " + clip("Table", label_width))
+        if display_width("  ".join(menu_titles)) > width:
+            menu_titles = [f"F{i}" for i in range(1, 9)]
         if self.equation_open:
             return self.equation_frame(width, height, "  ".join(menu_titles))
+        if self.table_open:
+            return self.table_frame(width, height, "  ".join(menu_titles))
         lines = ["  ".join(menu_titles), "-" * width]
         selected: dict[int, tuple[int, int]] = {}
         # Choose a visible history window that follows either the newest result
@@ -1717,16 +1911,17 @@ def menu_panel(items, heading, index, width, height, submenu=False):
 # Map Windows extended keys and POSIX escape sequences to shared UI key names.
 WINDOWS_KEYS = {"H": "UP", "P": "DOWN", "K": "LEFT", "M": "RIGHT", "G": "HOME", "O": "END",
                 "I": "PAGEUP", "Q": "PAGEDOWN", "S": "DELETE", ";": "F1", "<": "F2", "=": "F3",
-                ">": "F4", "?": "F5", "@": "F6", "A": "F7"}
+                ">": "F4", "?": "F5", "@": "F6", "A": "F7", "B": "F8"}
 ANSI_KEYS = {"\x1b[A": "UP", "\x1b[B": "DOWN", "\x1b[C": "RIGHT", "\x1b[D": "LEFT",
              "\x1b[H": "HOME", "\x1b[F": "END", "\x1b[1~": "HOME", "\x1b[4~": "END",
              "\x1b[7~": "HOME", "\x1b[8~": "END", "\x1b[3~": "DELETE", "\x1b[5~": "PAGEUP",
              "\x1b[6~": "PAGEDOWN", "\x1bOP": "F1", "\x1bOQ": "F2", "\x1bOR": "F3",
              "\x1bOS": "F4", "\x1b[11~": "F1", "\x1b[12~": "F2", "\x1b[13~": "F3",
-             "\x1b[14~": "F4", "\x1b[15~": "F5", "\x1b[17~": "F6", "\x1b[18~": "F7",
+             "\x1b[14~": "F4", "\x1b[15~": "F5", "\x1b[17~": "F6", "\x1b[18~": "F7", "\x1b[19~": "F8",
              "\x1bOH": "HOME", "\x1bOF": "END"}
 CONTROL_KEYS = {"\r": "ENTER", "\n": "ENTER", "\x1b": "ESC", "\t": "TAB", "\x08": "BACKSPACE",
-                "\x7f": "BACKSPACE", "\x03": "CTRL_C", "\x04": "CTRL_D", "\x15": "CTRL_U", "\x0c": "CTRL_L"}
+                "\x7f": "BACKSPACE", "\x03": "CTRL_C", "\x04": "CTRL_D", "\x15": "CTRL_U", "\x0c": "CTRL_L",
+                "\x14": "CTRL_T"}
 
 
 class Terminal:

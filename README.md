@@ -31,6 +31,8 @@ or Ctrl+D. The interactive app restores the terminal when it exits.
 | --- | --- |
 | F1–F6 | Open/close Math, Units, Constants, Symbols, Options, and Help menus |
 | F7 | Open the equation editor, or save the current equation and close it |
+| F8 | Open/close the table of checked equations |
+| Ctrl+T in F7 | Check/uncheck the selected equation for the table |
 | Up / Down | Select history results and expressions while preserving the input cursor |
 | Enter with history selected | Insert the highlighted part at the input cursor |
 | Enter in input | Calculate the expression or execute a `:` command |
@@ -87,6 +89,9 @@ settings, equations, units, and menus.
 Press **F7** to open the scrollable list of **y1 through y99**. Select a row with
 Up/Down or PageUp/PageDown and enter its formula in terms of `x` on the entry line.
 For example, type `4x` in the first slot; the entry line displays `y1(x)=4x`.
+The list shows `[✓] y1=4x`, keeping `(x)` in the entry line only. New and changed
+formulas are checked automatically. **Ctrl+T** checks/unchecks the selected formula
+for the table; browsing or reopening an unchanged formula preserves its checkmark.
 Press F7 again to save the formula and return to the calculator. Then:
 
 ```text
@@ -114,6 +119,37 @@ Use **`:save`** after returning to the calculator (or Save configuration in F5) 
 keep equations across restarts. They are stored in the settings JSON as an `equations`
 object, for example `"equations": {"y1": "4x", "y99": "x^2+1"}`. Saved equations
 can also be called in `--plain` and `--eval` modes.
+
+## Table
+
+Press **F8** from the calculator or equation editor to display a table with an `x`
+column and a column for each checked equation, in y1–y99 order. For example, with
+`y1=4x` and `y2=x^2` checked:
+
+```text
+x          | y1         | y2
+0          | 0          | 0
+1          | 4          | 1
+2          | 8          | 4
+3          | 12         | 9
+```
+
+Press **Tab** to set the starting x value and step. Tab switches between the two
+fields, Ctrl+U clears the current field, and Enter applies both values. The defaults
+are start `0` and step `1`. Numeric expressions such as `1/3` or `pi/2` work; the
+step can be negative but cannot be zero. Esc cancels a pending setup edit.
+
+Up/Down scrolls one row; PageUp/PageDown scrolls a page. Left/Right reveals additional
+equation columns when they do not all fit. Home returns to the starting x and first
+equation column. F7 returns to equations; F8 or Esc closes the table. A calculation
+that fails at a particular x displays `Error` in that cell while the other cells
+remain available. Table calculations preserve calculator variables, `ans`, history,
+and pending input. Unchecked equations can still be called normally in calculations.
+
+Use **`:save`** in the calculator to keep table settings and equation checkmarks across
+restarts. Settings store `"table": {"start": "0", "step": "1"}` and an
+`"unchecked_equations"` list, such as `["y2"]`. Older settings default to checking all
+defined equations.
 
 ## Math
 

@@ -157,9 +157,9 @@ class ConsoleTests(unittest.TestCase):
         self.type_keys("4x")
         lines, selected, cursor = self.app.frame()
         self.assertIn("F7 Equations", lines[0])
-        self.assertIn("y1(x)=4x", lines[2])
+        self.assertIn("y1=4x", lines[2])
         self.assertEqual(lines[-3], "y1(x)=4x")
-        self.assertEqual(lines[next(iter(selected))], "> y1(x)=4x")
+        self.assertEqual(lines[next(iter(selected))], "> [✓] y1=4x")
         self.assertEqual(cursor, (22, 9))
         self.app.handle_key("F7")
         self.assertFalse(self.app.equation_open)
@@ -183,7 +183,7 @@ class ConsoleTests(unittest.TestCase):
             lines, selected, cursor = self.app.frame(width, height)
             self.assertEqual(len(lines), height)
             self.assertIn("y99(x)=x+99", lines[-3])
-            self.assertIn("y99(x)=x+99", lines[next(iter(selected))])
+            self.assertIn("y99=x+99", lines[next(iter(selected))])
             self.assertLessEqual(cursor[1], width)
             self.assertTrue(all(display_width(line) <= width for line in lines))
         self.app.handle_key("F7")
@@ -260,6 +260,171 @@ class ConsoleTests(unittest.TestCase):
         self.app.handle_key("F1")
         self.assertFalse(self.app.equation_open)
         self.assertEqual(self.app.open_menu, 0)
+
+    def test_equation_checkmarks_toggle_and_stay_unchecked_when_browsing(self):
+        self.app.handle_key("F7")
+        self.type_keys("4x")
+        self.app.handle_key("ENTER")
+        self.app.handle_key("UP")
+        self.app.handle_key("CTRL_T")
+        lines, _, _ = self.app.frame()
+        self.assertIn("> [ ] y1=4x", lines)
+        self.assertEqual(lines[-3], "y1(x)=4x")
+        self.app.handle_key("DOWN")
+        self.app.handle_key("UP")
+        self.app.handle_key("F8")
+        self.assertFalse(self.app.equation_open)
+        self.assertTrue(self.app.table_open)
+        self.assertEqual(self.app.table_equation_names(), [])
+        self.assertEqual(self.app.calculator.calculate("y1(3)"), "12")
+        self.app.handle_key("F7")
+        self.app.handle_key("CTRL_T")
+        self.assertEqual(self.app.table_equation_names(), ["y1"])
+        self.app.handle_key("CTRL_T")
+        self.type_keys("+1")
+        self.app.handle_key("ENTER")
+        self.assertEqual(self.app.table_equation_names(), ["y1"])
+        self.app.handle_key("UP")
+        self.app.handle_key("CTRL_U")
+        self.app.handle_key("ENTER")
+        self.assertEqual(self.app.table_equation_names(), [])
+        self.assertNotIn("y1", self.app.calculator.unchecked_equations)
+        self.app.handle_key("CTRL_T")
+        self.assertFalse(self.app.calculator.unchecked_equations)
+
+    def test_table_displays_checked_equations_without_changing_calculator_state(self):
+        self.app.calculator.define_equation("y1", "4x")
+        self.app.calculator.define_equation("y2", "x^2")
+        self.app.calculator.define_equation("y3", "x+99")
+        self.app.calculator.unchecked_equations.add("y3")
+        self.app.calculator.calculate("7->x")
+        before = list(self.app.calculator.history)
+        self.type_keys("y1(3)+")
+        self.app.handle_key("F8")
+        lines, selected, cursor = self.app.frame()
+        self.assertEqual([cell.strip() for cell in lines[2].split("|")], ["x", "y1", "y2"])
+        self.assertEqual([cell.strip() for cell in lines[7].split("|")], ["3", "12", "9"])
+        self.assertFalse(selected)
+        self.assertIsNone(cursor)
+        self.assertEqual(self.app.calculator.answer.value, 7)
+        self.assertEqual(self.app.calculator.variables["x"].value, 7)
+        self.assertEqual(list(self.app.calculator.history), before)
+        self.app.handle_key("F8")
+        self.assertEqual(self.app.text, "y1(3)+")
+        self.assertEqual(self.app.cursor, 6)
+
+    def test_table_setup_accepts_exact_start_and_negative_step(self):
+        self.app.calculator.define_equation("y1", "4x")
+        self.app.handle_key("F8")
+        self.app.handle_key("TAB")
+        self.app.handle_key("CTRL_U")
+        self.type_keys("3")
+        self.app.handle_key("TAB")
+        self.app.handle_key("CTRL_U")
+        self.type_keys("-1/2")
+        lines, _, cursor = self.app.frame()
+        self.assertEqual(lines[-3], "Step=-1/2")
+        self.assertIsNotNone(cursor)
+        self.app.handle_key("ENTER")
+        self.assertEqual((self.app.table_start, self.app.table_step), ("3", "-1/2"))
+        lines, _, cursor = self.app.frame()
+        self.assertEqual([cell.strip() for cell in lines[4].split("|")], ["3", "12"])
+        self.assertEqual([cell.strip() for cell in lines[5].split("|")], ["5/2", "10"])
+        self.assertIsNone(cursor)
+        self.app.handle_key("DOWN")
+        lines, _, _ = self.app.frame()
+        self.assertEqual(lines[4].split("|")[0].strip(), "5/2")
+        self.app.handle_key("HOME")
+        self.assertEqual(self.app.table_row, 0)
+
+    def test_invalid_table_setup_stays_editable_and_can_be_canceled(self):
+        self.app.handle_key("F8")
+        self.app.handle_key("TAB")
+        self.app.handle_key("TAB")
+        self.app.handle_key("CTRL_U")
+        self.type_keys("0")
+        for key in ("ENTER", "F8", "F7", "F1"):
+            self.app.handle_key(key)
+            self.assertTrue(self.app.table_open)
+            self.assertEqual(self.app.table_edit_field, 1)
+            self.assertIn("step cannot be zero", self.app.message)
+            self.assertEqual(self.app.table_step, "1")
+        self.app.handle_key("ESC")
+        self.assertTrue(self.app.table_open)
+        self.assertIsNone(self.app.table_edit_field)
+        self.app.handle_key("ESC")
+        self.assertFalse(self.app.table_open)
+        for bad_start, bad_step in (("t", "1"), ("True", "1"), ("1_m", "1"),
+                                    ("i", "1"), ("1/0", "1"), ("0", "x")):
+            with self.subTest(start=bad_start, step=bad_step), self.assertRaises(CalcError):
+                self.app.validate_table_settings(self.app.calculator, bad_start, bad_step)
+
+    def test_table_errors_are_per_cell_and_empty_table_explains_checkmarks(self):
+        self.app.handle_key("F8")
+        lines, _, _ = self.app.frame()
+        self.assertIn("Check equations in F7", lines[4])
+        self.app.calculator.define_equation("y1", "1/x")
+        self.app.calculator.define_equation("y2", "4x")
+        self.app.calculator.define_equation("y3", "y99(x)")
+        lines, _, _ = self.app.frame()
+        self.assertEqual([cell.strip() for cell in lines[4].split("|")], ["0", "Error", "0", "Error"])
+        self.assertEqual([cell.strip() for cell in lines[5].split("|")], ["1", "1", "4", "Error"])
+        self.assertFalse(self.app.calculator.history)
+
+    def test_table_scrolls_to_all_99_equations_and_resizes(self):
+        for i in range(1, 100):
+            self.app.calculator.define_equation(f"y{i}", f"{i}x")
+        self.app.handle_key("F8")
+        for _ in range(100):
+            self.app.handle_key("RIGHT")
+        for width, height in ((40, 12), (100, 24), (160, 40)):
+            lines, _, cursor = self.app.frame(width, height)
+            self.assertIn("y99", lines[2])
+            self.assertEqual(len(lines), height)
+            self.assertTrue(all(display_width(line) <= width for line in lines))
+            self.assertIsNone(cursor)
+        self.app.handle_key("PAGEDOWN")
+        self.assertGreater(self.app.table_row, 0)
+        self.app.handle_key("PAGEUP")
+        self.assertEqual(self.app.table_row, 0)
+        self.app.handle_key("HOME")
+        self.assertEqual(self.app.table_column, 0)
+
+    def test_table_settings_and_unchecked_equations_persist_and_old_configs_default_checked(self):
+        self.app.calculator.define_equation("y1", "4x")
+        self.app.calculator.define_equation("y2", "y1(x)+1")
+        self.app.calculator.unchecked_equations.add("y1")
+        self.app.table_start, self.app.table_step = "3", "1/3"
+        self.app.command(":save")
+        restored = ConsoleApp(config_path=self.config_path)
+        self.assertEqual(restored.table_equation_names(), ["y2"])
+        self.assertEqual((restored.table_start, restored.table_step), ("3", "1/3"))
+        restored.handle_key("F8")
+        lines, _, _ = restored.frame()
+        self.assertEqual([cell.strip() for cell in lines[4].split("|")], ["3", "13"])
+        self.config_path.write_text(json.dumps({"equations": {"y1": "4x"}}), encoding="utf-8")
+        restored = ConsoleApp(config_path=self.config_path)
+        self.assertEqual(restored.table_equation_names(), ["y1"])
+        self.assertEqual((restored.table_start, restored.table_step), ("0", "1"))
+
+    def test_bad_table_configuration_loads_atomically_and_preserves_file(self):
+        for extra in ({"unchecked_equations": "y1"}, {"unchecked_equations": ["y99"]},
+                      {"table": []}, {"table": {"step": "0"}}, {"table": {"start": 3}}):
+            configuration = json.dumps({"equations": {"y1": "4x"}, **extra})
+            with self.subTest(extra=extra):
+                self.config_path.write_text(configuration, encoding="utf-8")
+                restored = ConsoleApp(config_path=self.config_path)
+                self.assertIn("Config error:", restored.message)
+                self.assertFalse(restored.calculator.equations)
+                self.assertEqual(self.config_path.read_text(encoding="utf-8"), configuration)
+
+    def test_invalid_equation_blocks_opening_table(self):
+        self.app.handle_key("F7")
+        self.type_keys("4x+")
+        self.app.handle_key("F8")
+        self.assertTrue(self.app.equation_open)
+        self.assertFalse(self.app.table_open)
+        self.assertIn("Error:", self.app.message)
 
     def test_recent_calculations_and_browsing_older_entries(self):
         for i in range(10):
@@ -1032,20 +1197,21 @@ class ConsoleTests(unittest.TestCase):
             self.assertIsNone(Terminal().read_key(timeout=0))
             keyboard.getwch.assert_not_called()
 
-    def test_windows_f7_key_opens_equations(self):
-        keyboard = Mock()
-        keyboard.getwch.side_effect = ["\x00", "A"]
-        with patch("os.name", "nt"), patch.dict("sys.modules", {"msvcrt": keyboard}):
-            self.app.handle_key(Terminal().read_key())
-        self.assertTrue(self.app.equation_open)
+    def test_windows_equation_and_table_shortcuts(self):
+        for code, expected in ((["\x00", "A"], "F7"), (["\x00", "B"], "F8"), (["\x14"], "CTRL_T")):
+            with self.subTest(expected=expected):
+                keyboard = Mock()
+                keyboard.getwch.side_effect = code
+                with patch("os.name", "nt"), patch.dict("sys.modules", {"msvcrt": keyboard}):
+                    self.assertEqual(Terminal().read_key(), expected)
 
-    def test_posix_f7_key_opens_equations(self):
-        with patch("os.name", "posix"), patch("sys.stdin") as stdin, \
-                patch("select.select", return_value=([0], [], [])), \
-                patch("os.read", side_effect=[b"\x1b", b"[", b"1", b"8", b"~"]):
-            stdin.fileno.return_value = 0
-            self.app.handle_key(Terminal().read_key())
-        self.assertTrue(self.app.equation_open)
+    def test_posix_equation_and_table_shortcuts(self):
+        for code, expected in ((b"\x1b[18~", "F7"), (b"\x1b[19~", "F8"), (b"\x14", "CTRL_T")):
+            with self.subTest(expected=expected), patch("os.name", "posix"), patch("sys.stdin") as stdin, \
+                    patch("select.select", return_value=([0], [], [])), \
+                    patch("os.read", side_effect=[bytes([byte]) for byte in code]):
+                stdin.fileno.return_value = 0
+                self.assertEqual(Terminal().read_key(), expected)
 
     def test_posix_key_timeout_leaves_input_unread(self):
         with patch("os.name", "posix"), patch("select.select", return_value=([], [], [])), \
