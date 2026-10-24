@@ -458,6 +458,57 @@ FUNCTIONS = {"sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh"
 EQUATION_NAMES = tuple(f"y{i}" for i in range(1, 100))
 TRANSLATE = str.maketrans({"→": "->", "⇒": "=>", "×": "*", "÷": "/", "−": "-", "²": "^2", "³": "^3",
                            "≤": "<=", "≥": ">=", "≠": "!="})
+SYNTAX_TOKEN = re.compile(r"(?P<base>0[bB][01_]*|0[hH][0-9a-fA-F_]*|0[oO][0-7_]*)|"
+                          + TOKEN.pattern + r"|(?P<unicode>[→⇒×÷−²³≤≥≠])", re.UNICODE)
+SYNTAX_COLORS = {"number": "38;2;184;134;11", "function": "96", "constant": "95",
+                 "unit": "92", "operator": "94", "command": "94"}
+
+
+def expression_highlights(text) -> list[tuple[int, int, str]]:
+    """Lex incomplete input for display without parsing or evaluating it."""
+    spans: list[tuple[int, int, str]] = []
+    for match in SYNTAX_TOKEN.finditer(text):
+        kind, token = match.lastgroup, match.group()
+        if kind == "base":
+            kind = "number"
+        elif kind in ("op", "unicode") or token in BITWISE:
+            kind = "operator"
+        elif kind == "name":
+            if token in FUNCTIONS or token in EQUATION_NAMES:
+                kind = "function"
+            elif token in RESERVED or token == "ans":
+                kind = "constant"
+            else:
+                continue
+        if kind is not None and kind in SYNTAX_COLORS:
+            spans.append((match.start(), match.end(), kind))
+    command = re.match(r"\s*(:[a-z]+)", text)
+    if command:
+        spans.append((*command.span(1), "command"))
+    return spans
+
+
+def colorize_line(text, spans=(), selected=None):
+    """Apply colors after layout; inverse selection takes precedence over syntax."""
+    styles = [""] * len(text)
+    for first, last, kind in spans:
+        first, last = max(0, first), min(len(text), last)
+        if first < last:
+            styles[first:last] = [SYNTAX_COLORS[kind]] * (last - first)
+    if selected is not None:
+        first, last = max(0, selected[0]), min(len(text), selected[1])
+        if first < last:
+            styles[first:last] = ["7"] * (last - first)
+    output = []
+    first = 0
+    while first < len(text):
+        last = first + 1
+        while last < len(text) and styles[last] == styles[first]:
+            last += 1
+        segment = text[first:last]
+        output.append(f"\x1b[{styles[first]}m{segment}\x1b[0m" if styles[first] else segment)
+        first = last
+    return "".join(output)
 
 
 def normalize_input(text):
@@ -1049,6 +1100,7 @@ def default_menus(registry):
         {"label": "Symbols", "items": [insert_item(s + " " + label, s) for s, label in SYMBOLS]},
         {"label": "Options", "items": [command_item("Radian mode", ":mode radian"), command_item("Degree mode", ":mode degree"),
          *output_options(),
+         command_item("Syntax colors: On", ":colors toggle"),
          problem_menu(),
          command_item("Select result first", ":recall result"), command_item("Select expression first", ":recall expression"),
          insert_item("Set precision", ":precision 100"), insert_item("Rename a menu", ":menu 1 Math"),
@@ -1157,6 +1209,8 @@ class ConsoleApp:
         self.cursor = 0
         self._selected_input: str | None = None
         self._selection_anchor: int | None = None
+        self.syntax_highlights: dict[int, list[tuple[int, int, str]]] = {}
+        self.syntax_colors = True
         self.history_index = None
         self.history_rows = 17  # Default 24-row terminal, minus menus and footer.
         self.history_start = 0
@@ -1401,6 +1455,9 @@ class ConsoleApp:
             data = json.loads(self.config_path.read_text(encoding="utf-8"))
             if not isinstance(data, dict):
                 raise CalcError("Configuration must be a JSON object.")
+            syntax_colors = data.get("syntax_colors", True)
+            if not isinstance(syntax_colors, bool):
+                raise CalcError("syntax_colors must be true or false.")
             calculator = Calculator(data.get("mode", "radian"), data.get("precision", 50), data.get("output_mode", "exact"))
             recall = data.get("history_insert", "result")
             if recall not in ("result", "expression"):
@@ -1447,6 +1504,8 @@ class ConsoleApp:
                         menus[4]["items"].append(option)
             if not any(item.get("label") == "Problems" and "items" in item for item in menus[4]["items"]):
                 menus[4]["items"].append(problem_menu())
+            if not any(item.get("command") == ":colors toggle" for item in menus[4]["items"]):
+                menus[4]["items"].append(command_item("Syntax colors: On", ":colors toggle"))
             # Older settings included the built-in history action under Options.
             menus[4]["items"] = [item for item in menus[4]["items"] if item.get("command") != ":clear"]
             if not any(item.get("command") == ":catalog" for item in menus[5]["items"]):
@@ -1454,6 +1513,8 @@ class ConsoleApp:
             self.calculator = calculator
             self.history_insert = recall
             self.menus = menus
+            self.syntax_colors = syntax_colors
+            self.refresh_color_option()
             self.table_start, self.table_step = start, step
         except (OSError, ValueError, TypeError) as exc:
             # Invalid files never partially replace the live state.
@@ -1464,6 +1525,7 @@ class ConsoleApp:
         # General settings stay separate from the automatically saved Problems file.
         data = {"mode": self.calculator.mode, "precision": self.calculator.precision,
                 "output_mode": self.calculator.output_mode,
+                "syntax_colors": self.syntax_colors,
                 "history_insert": self.history_insert, "units": self.calculator.unit_definitions,
                 "equations": self.calculator.equations,
                 "unchecked_equations": sorted(self.calculator.unchecked_equations,
@@ -1550,6 +1612,11 @@ class ConsoleApp:
             raise CalcError("No menu is open.")
         return cleanup_menu() if self.open_menu == 8 else self.menus[self.open_menu]
 
+    def refresh_color_option(self):
+        for item in self.menus[4]["items"]:
+            if item.get("command") == ":colors toggle":
+                item["label"] = "Syntax colors: " + ("On" if self.syntax_colors else "Off")
+
     def menu_items(self):
         # Filtering applies to the active submenu, or the root when no submenu is open.
         if self.open_menu is None:
@@ -1576,6 +1643,13 @@ class ConsoleApp:
             self.help_open = True
         elif name == ":catalog":
             self.open_catalog()
+        elif name == ":colors":
+            arg = arg or "toggle"
+            if arg not in ("on", "off", "toggle"):
+                raise CalcError("Use :colors on, :colors off, or :colors toggle.")
+            self.syntax_colors = {"on": True, "off": False, "toggle": not self.syntax_colors}[arg]
+            self.refresh_color_option()
+            self.message = "Syntax colors: " + ("On" if self.syntax_colors else "Off") + "; :save to keep settings."
         elif name == ":problem":
             action, _, problem_name = arg.partition(" ")
             if action not in ("new", "open", "delete"):
@@ -1901,6 +1975,23 @@ class ConsoleApp:
             self.equation_text = self.equation_text[:position] + key + self.equation_text[position:]
             self.equation_cursor += 1
 
+    def highlight_expression(self, row, text, column=0, offset=0):
+        if not self.syntax_colors:
+            return
+        spans = self.syntax_highlights.setdefault(row, [])
+        for first, last, kind in expression_highlights(text):
+            if last > offset:
+                spans.append((column + max(first, offset) - offset, column + last - offset, kind))
+
+    def mask_syntax_highlights(self, row, first, last):
+        spans = []
+        for begin, end, kind in self.syntax_highlights.get(row, []):
+            if begin < first:
+                spans.append((begin, min(end, first), kind))
+            if end > last:
+                spans.append((max(begin, last), end, kind))
+        self.syntax_highlights[row] = spans
+
     def status_with_shift(self, text, width):
         indicator = "↑" if self.shift_pressed else " "
         return clip(f" {self.problem_name} | {indicator} | {text.lstrip()}", width)
@@ -1921,6 +2012,7 @@ class ConsoleApp:
             changed = active and expression.strip() != self.calculator.equations.get(name, "")
             checked = bool(expression.strip()) and (changed or name not in self.calculator.unchecked_equations)
             line = ("> " if active else "  ") + ("[✓] " if checked else "[ ] ") + f"{name}=" + expression
+            self.highlight_expression(len(lines), f"{name}=" + expression, column=6)
             if active:
                 selected[len(lines)] = (0, len(line))
             lines.append(line)
@@ -1930,6 +2022,8 @@ class ConsoleApp:
         while display_width(self.equation_text[start:self.equation_cursor]) >= available:
             start += 1
         lines += ["-" * width, prefix + self.equation_text[start:], "-" * width]
+        self.highlight_expression(len(lines) - 2, prefix)
+        self.highlight_expression(len(lines) - 2, self.equation_text, column=len(prefix), offset=start)
         cursor = (height - 3, display_width(prefix + self.equation_text[start:self.equation_cursor]) + 1)
         lines += [f" Equation {self.equation_index + 1}/99 | Ctrl+T: check/uncheck | F8: table",
                   self.message]
@@ -2043,7 +2137,10 @@ class ConsoleApp:
                     cells.append(self.calculator.format(self.calculator.equation(name, [argument])))
                 except CalcError:
                     cells.append("Error")
-            lines.append(row(cells))
+            content = row(cells)
+            for cell in re.finditer(r"[^|]+", content):
+                self.highlight_expression(len(lines), cell.group(), column=cell.start())
+            lines.append(content)
         lines.append("-" * width)
         cursor = None
         field = self.table_edit_field
@@ -2055,6 +2152,7 @@ class ConsoleApp:
             while display_width(text[first:self.table_cursor]) >= available:
                 first += 1
             lines.append(prefix + text[first:])
+            self.highlight_expression(len(lines) - 1, text, column=len(prefix), offset=first)
             cursor = (height - 3, len(prefix) + display_width(text[first:self.table_cursor]) + 1)
         else:
             lines.append("Tab: start/step | F7: equations | F8: close")
@@ -2132,6 +2230,7 @@ class ConsoleApp:
         for index, content in enumerate(panel, top):
             background = lines[index].ljust(width)
             lines[index] = background[:left] + content + background[left + box_width:]
+            self.mask_syntax_highlights(index, left, left + box_width)
         selected = {top + 3 + self.catalog_index - first: (left + 1, left + box_width - 1)} if items else {}
         return lines, selected, None
 
@@ -2274,11 +2373,13 @@ class ConsoleApp:
         for row, content in enumerate(panel, top):
             background = lines[row].ljust(width)
             lines[row] = background[:left] + content + background[left + display_width(content):]
+            self.mask_syntax_highlights(row, left, left + display_width(content))
         return lines, selected, cursor
 
     def frame(self, width=100, height=24):
         """Return plain text lines, selected character spans by row, and input cursor."""
         width, height = max(1, width), max(1, height)
+        self.syntax_highlights = {}
         # Reserve two menu rows and five for the input's two rules, input, status, and message.
         self.history_rows = max(1, height - 7)
         history_limit = max(30, self.history_rows)
@@ -2332,10 +2433,10 @@ class ConsoleApp:
             if j < len(history):
                 prefix = marker + f"{j + 1:2}. "
                 content = history[j].line
+                offset = 0
                 if j == index:
                     first = 0 if self.history_part == "expression" else len(history[j].source) + 3
                     last = len(history[j].source) if self.history_part == "expression" else len(content)
-                    offset = 0
                     available = width - display_width(prefix)
                     if first and display_width(content[:last]) > available:
                         # Scroll the selected row so a result after a long expression is visible.
@@ -2347,6 +2448,8 @@ class ConsoleApp:
                     selected[len(lines)] = (len(prefix) + first - offset, len(prefix) + last - offset)
                     content = content[offset:]
                 line = prefix + content
+                expression = history[j].source if history[j].is_error else history[j].line
+                self.highlight_expression(len(lines), expression, column=len(prefix), offset=offset)
             else:
                 line = "  (history is empty)" if i == 0 else ""
             lines.append(line)
@@ -2368,6 +2471,7 @@ class ConsoleApp:
             start_text += 1
         input_row = len(lines)
         lines.append("> " + self.text[start_text:start_text + available])
+        self.highlight_expression(input_row, self.text, column=2, offset=start_text)
         cursor = (input_row + 1, 3 + display_width(self.text[start_text:self.cursor]))
         if input_selection is not None and index is None:
             first, last = input_selection
@@ -2386,6 +2490,7 @@ class ConsoleApp:
         if self.help_open:
             # Overlays replace the relevant frame rows and hide the editing cursor.
             selected = {}
+            self.syntax_highlights = {}
             for row, text in enumerate(["HELP (Esc to close)"] + HELP_LINES, start=2):
                 if row >= height:
                     break
@@ -2422,6 +2527,7 @@ class ConsoleApp:
                 for row, content in enumerate(panel, start=top):
                     background = lines[row].ljust(width)
                     lines[row] = background[:anchor] + content + background[anchor + box_width:]
+                    self.mask_syntax_highlights(row, anchor, anchor + box_width)
                 if depth == len(levels) - 1 and items:
                     selected[top + 2 + menu_index - first] = (anchor + 1, anchor + box_width - 1)
                 previous_width, previous_first = box_width, first
@@ -2652,11 +2758,7 @@ class Terminal:
         # in one batch. Frame coordinates for the cursor are already one-based.
         for row, line in enumerate(lines):
             output.append(f"\x1b[{row + 1};1H\x1b[2K")
-            if row in selected:
-                first, last = selected[row]
-                output.append(line[:first] + "\x1b[7m" + line[first:last] + "\x1b[0m" + line[last:])
-            else:
-                output.append(line)
+            output.append(colorize_line(line, app.syntax_highlights.get(row, ()), selected.get(row)))
         if cursor:
             output.append(f"\x1b[{cursor[0]};{cursor[1]}H\x1b[?25h")
         sys.stdout.write("".join(output))

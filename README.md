@@ -25,6 +25,19 @@ modern Windows console hosts support it. Use `--plain` in a basic terminal or pi
 redirected input/output selects plain mode automatically. Quit using `:quit`, Ctrl+C,
 or Ctrl+D. The interactive app restores the terminal when it exits.
 
+Expressions use terminal syntax colors: **dark amber numbers**, **cyan function names**,
+**green units/physical constants**, **magenta built-in values** (such as `pi` and `ans`),
+and **blue operators/commands**. Colors appear as you type, including incomplete
+expressions, and in history, the equation editor, and table values. Selected text
+uses inverse highlighting for readability. Input, saved history, and plain/batch
+output remain ordinary text.
+
+Colors are **on by default**. In **F5 Options**, select **Syntax colors: On/Off** to
+toggle them immediately. Text selection remains highlighted when colors are off.
+Use **Save configuration** in F5 (or `:save`) to keep the preference across restarts.
+The setting is shared across Problems. Commands `:colors on`, `:colors off`, and
+`:colors toggle` also work; JSON settings use `"syntax_colors": true` or `false`.
+
 ## Keyboard
 
 | Key | Action |
