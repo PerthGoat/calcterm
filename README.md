@@ -49,10 +49,12 @@ The setting is shared across Problems. Commands `:colors on`, `:colors off`, and
 | Ctrl+T in F7 | Check/uncheck the selected equation for the table |
 | Up / Down | Select history results and expressions while preserving the input cursor |
 | Enter with history selected | Insert the highlighted part at the input cursor |
+| Backspace with history selected | Delete the whole selected history entry |
 | Enter in input | Calculate and select the expression, or execute a `:` command |
 | Shift+Enter in input | Calculate an approximate result for this submission |
 | Left / Right | Move the input cursor; open/return from submenus or switch top menus |
 | Shift+Left / Shift+Right | Extend or shrink the input selection |
+| Insert | Toggle overwrite typing; show/hide INS in the status bar |
 | Home / End | Move to the input ends or the first/last dropdown item |
 | Backspace / Delete | Edit the input |
 | PageUp / PageDown | Browse history or page through a dropdown |
@@ -85,8 +87,15 @@ opposite direction. Typing, history recall, and menu/Catalog insertions replace 
 the selected portion, while Backspace/Delete removes it. Plain Left/Right collapses
 a partial selection to its left/right edge.
 
-On Windows, the bottom status bar shows `ProblemName | ↑ | RADIAN` while Shift is
-physically held. The arrow slot stays blank when released, keeping the layout stable.
+**Insert** toggles insertion mode with overwrite typing: when **INS** is shown, typed
+characters replace existing characters at the cursor. Typing at the end appends text.
+Selected text is replaced as a unit. The mode also applies to the equation editor,
+table setup, and new Problem name field. Menu, Catalog, and history insertions keep
+their insertion behavior. The mode starts off when the app opens.
+
+The bottom status bar has fixed slots: `ProblemName | ↑ | INS | RADIAN`. The INS slot
+stays blank when insertion mode is off. On Windows, the arrow appears while Shift is
+physically held and its slot stays blank when released, keeping the layout stable.
 It updates even without another key
 press and is also shown in the equation editor and table. Other platforms keep it
 hidden because ordinary terminal input does not reliably report bare Shift releases.
@@ -110,7 +119,8 @@ older saved Options menus are updated when loaded. F9 is a built-in menu; the si
 F1–F6 menus keep their existing configuration format.
 
 The third item, **Reset configuration**, restores radians, exact output, 50-digit
-precision, result-first history recall, syntax colors on, and the default menus.
+precision, result-first history recall, syntax colors on, insertion mode off, and
+the default menus.
 The reset saves automatically. Saved Problems, equations, history, table settings,
 session variables/`ans`, and custom unit definitions are retained. The command
 `:resetconfig` performs the same reset.
@@ -151,6 +161,12 @@ The history limit still follows the terminal height,
 with a minimum of 30. Restoring history displays the recorded expressions and results
 without evaluating them again. Variables last for the current session. General
 settings, custom units, and menus save automatically when changed.
+
+With a history entry selected, **Backspace deletes the entire calculation**, whether
+its expression or result is highlighted. The deletion saves automatically in the
+current Problem. Selection moves to the nearest remaining entry; deleting the last
+one returns focus to input. The input, assigned variables, equations, and `ans` remain
+available; removing history does not undo the calculation.
 
 ## Problems
 

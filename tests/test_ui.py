@@ -1570,7 +1570,7 @@ class ConsoleTests(unittest.TestCase):
 
     def test_windows_equation_and_table_shortcuts(self):
         for code, expected in ((["\x00", "A"], "F7"), (["\x00", "B"], "F8"),
-                               (["\x00", "C"], "F9"), (["\x14"], "CTRL_T")):
+                               (["\x00", "C"], "F9"), (["\xe0", "R"], "INSERT"), (["\x14"], "CTRL_T")):
             with self.subTest(expected=expected):
                 keyboard = Mock()
                 keyboard.getwch.side_effect = code
@@ -1639,7 +1639,7 @@ class ConsoleTests(unittest.TestCase):
 
     def test_posix_equation_and_table_shortcuts(self):
         for code, expected in ((b"\x1b[18~", "F7"), (b"\x1b[19~", "F8"),
-                               (b"\x1b[20~", "F9"), (b"\x14", "CTRL_T")):
+                               (b"\x1b[20~", "F9"), (b"\x1b[2~", "INSERT"), (b"\x14", "CTRL_T")):
             with self.subTest(expected=expected), patch("os.name", "posix"), patch("sys.stdin") as stdin, \
                     patch("select.select", return_value=([0], [], [])), \
                     patch("os.read", side_effect=[bytes([byte]) for byte in code]):

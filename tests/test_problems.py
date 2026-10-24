@@ -90,7 +90,7 @@ class ProblemTests(unittest.TestCase):
         self.assertIsNone(self.app.problem_dialog)
         lines, _, _ = self.app.frame()
         self.assertEqual(lines[1], "-" * 100)
-        self.assertTrue(lines[-2].startswith(" Default |   | RADIAN"))
+        self.assertTrue(lines[-2].startswith(" Default |   |     | RADIAN"))
 
     def test_new_problem_rejects_empty_and_duplicate_names_without_overwriting(self):
         self.app.new_problem("Algebra")

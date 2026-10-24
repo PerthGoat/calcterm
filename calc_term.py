@@ -1150,10 +1150,12 @@ def validate_menus(menus):
 
 HELP_LINES = [
     "Up/Down: select history results/expressions; Enter: insert the highlighted part.",
+    "Backspace with history selected: delete the whole entry and save history.",
     "Shift+Enter in input: approximate this result; the configured output mode stays unchanged.",
     "After calculation: input stays selected; type to replace; Backspace/Delete clears.",
     "Left/Right on selected input: move to the beginning/end for editing.",
     "Shift+Left/Right: select part of the input; type or Backspace/Delete replaces it.",
+    "Insert: toggle overwrite typing; INS appears beside the Shift indicator when on.",
     "Left/Right: move cursor; Home/End: line ends; Tab: input/history focus.",
     "Esc: close menu or return to input; Ctrl+C / Ctrl+D: quit; Ctrl+L: redraw.",
     "F1-F6: menus; Up/Down or PageUp/PageDown: select; Enter: choose.",
@@ -1177,6 +1179,11 @@ HELP_LINES = [
     "Equations and Problems save automatically; F5 > Problems: new/open/delete.",
     "Settings, custom units, and menus save automatically; :resetconfig restores defaults.",
 ]
+
+
+def insert_text_at_cursor(text, cursor, inserted, overwrite=False):
+    end = cursor + len(inserted) if overwrite else cursor
+    return text[:cursor] + inserted + text[end:], cursor + len(inserted)
 
 
 class ConsoleApp:
@@ -1236,6 +1243,7 @@ class ConsoleApp:
         self.table_fields = ["0", "1"]
         self.table_cursor = 0
         self.shift_pressed = False
+        self.insert_mode = False
         self.message = "F7: equations | F8: table | F6: help | Enter: calculate | :quit: exit"
         self.help_open = False
         self.running = True
@@ -1559,6 +1567,7 @@ class ConsoleApp:
         self.calculator.set_output_mode("exact")
         self.history_insert = "result"
         self.syntax_colors = True
+        self.insert_mode = False
         self.menus = default_menus(self.calculator.registry)
         self.open_menu = None
         self.menu_stack.clear()
@@ -1599,12 +1608,25 @@ class ConsoleApp:
         self.text, self.cursor, self.history_index = "", 0, None
         self.clear_input_selection()
 
-    def insert(self, text):
-        self.delete_input_selection()
+    def insert(self, text, overwrite=False):
+        replaced_selection = self.delete_input_selection()
         self.clear_input_selection()
-        self.text = self.text[:self.cursor] + text + self.text[self.cursor:]
-        self.cursor += len(text)
+        self.text, self.cursor = insert_text_at_cursor(self.text, self.cursor, text,
+                                                      overwrite=overwrite and not replaced_selection)
         self.history_index = None
+
+    def delete_history_entry(self):
+        history = self.calculator.history
+        index = self.history_index
+        if index is None or not 0 <= index < len(history):
+            return
+        del history[index]
+        self.history_index = min(index, len(history) - 1) if history else None
+        if self.history_index is not None and history[self.history_index].is_error:
+            self.history_part = "expression"
+        self.history_start = min(self.history_start, max(0, len(history) - self.history_rows))
+        self.message = "Deleted history entry."
+        self.save_history(force=True)
 
     def browse_history(self, direction: int, page: bool = False):
         # Each successful row has two selectable parts; error rows expose only the input.
@@ -1783,6 +1805,9 @@ class ConsoleApp:
         if key in ("CTRL_C", "CTRL_D"):
             self.running = False
             return
+        if key == "INSERT":
+            self.insert_mode = not self.insert_mode
+            return
         if self.problem_dialog is not None:
             self.handle_problem_key(key)
             return
@@ -1884,7 +1909,9 @@ class ConsoleApp:
                 self.menu_index = 0
             return
         history = self.calculator.history
-        if key in ("UP", "PAGEUP") and history:
+        if key == "BACKSPACE" and self.history_index is not None:
+            self.delete_history_entry()
+        elif key in ("UP", "PAGEUP") and history:
             self.browse_history(-1, page=key == "PAGEUP")
         elif key in ("DOWN", "PAGEDOWN") and self.history_index is not None:
             self.browse_history(1, page=key == "PAGEDOWN")
@@ -1942,7 +1969,7 @@ class ConsoleApp:
         elif key == "CTRL_U":
             self.clear_input()
         elif len(key) == 1 and key.isprintable():
-            self.insert(key)
+            self.insert(key, overwrite=self.insert_mode)
 
     def load_equation(self):
         name = EQUATION_NAMES[self.equation_index]
@@ -2002,8 +2029,8 @@ class ConsoleApp:
             self.equation_text = self.equation_text[:position] + self.equation_text[position + 1:]
         elif len(key) == 1 and key.isprintable():
             position = self.equation_cursor
-            self.equation_text = self.equation_text[:position] + key + self.equation_text[position:]
-            self.equation_cursor += 1
+            self.equation_text, self.equation_cursor = insert_text_at_cursor(
+                self.equation_text, position, key, overwrite=self.insert_mode)
 
     def highlight_expression(self, row, text, column=0, offset=0):
         if not self.syntax_colors:
@@ -2022,9 +2049,10 @@ class ConsoleApp:
                 spans.append((max(begin, last), end, kind))
         self.syntax_highlights[row] = spans
 
-    def status_with_shift(self, text, width):
+    def status_with_indicators(self, text, width):
         indicator = "↑" if self.shift_pressed else " "
-        return clip(f" {self.problem_name} | {indicator} | {text.lstrip()}", width)
+        insertion = "INS" if self.insert_mode else "   "
+        return clip(f" {self.problem_name} | {indicator} | {insertion} | {text.lstrip()}", width)
 
     def equation_frame(self, width, height, menu_title):
         rows = height - 7
@@ -2057,7 +2085,7 @@ class ConsoleApp:
         cursor = (height - 3, display_width(prefix + self.equation_text[start:self.equation_cursor]) + 1)
         lines += [f" Equation {self.equation_index + 1}/99 | Ctrl+T: check/uncheck | F8: table",
                   self.message]
-        lines[-2] = self.status_with_shift(lines[-2], width)
+        lines[-2] = self.status_with_indicators(lines[-2], width)
         lines = [clip(line, width) for line in lines]
         selected = {row: (begin, min(end, len(lines[row]))) for row, (begin, end) in selected.items()}
         return lines, selected, cursor
@@ -2138,8 +2166,8 @@ class ConsoleApp:
         elif key == "DELETE":
             self.table_fields[field] = text[:position] + text[position + 1:]
         elif len(key) == 1 and key.isprintable():
-            self.table_fields[field] = text[:position] + key + text[position:]
-            self.table_cursor += 1
+            self.table_fields[field], self.table_cursor = insert_text_at_cursor(
+                text, position, key, overwrite=self.insert_mode)
 
     def table_frame(self, width, height, menu_title):
         column_width = min(18, max(10, (width - 12) // 5))
@@ -2190,7 +2218,7 @@ class ConsoleApp:
         lines += ["-" * width,
                   f" Row {self.table_row} | equations {first_column}-{self.table_column + len(visible)}/{len(names)} | arrows: scroll | Home: reset",
                   self.message]
-        lines[-2] = self.status_with_shift(lines[-2], width)
+        lines[-2] = self.status_with_indicators(lines[-2], width)
         return [clip(line, width) for line in lines], {}, cursor
 
     def open_catalog(self):
@@ -2358,8 +2386,8 @@ class ConsoleApp:
         elif key == "DELETE":
             self.problem_dialog_text = text[:position] + text[position + 1:]
         elif len(key) == 1 and key.isprintable():
-            self.problem_dialog_text = text[:position] + key + text[position:]
-            self.problem_dialog_cursor += 1
+            self.problem_dialog_text, self.problem_dialog_cursor = insert_text_at_cursor(
+                text, position, key, overwrite=self.insert_mode)
 
     def problem_dialog_frame(self, lines, width, height):
         selected = {}
@@ -2568,7 +2596,7 @@ class ConsoleApp:
             lines, selected, cursor = self.problem_dialog_frame(lines, width, height)
         elif self.catalog_open:
             lines, selected, cursor = self.catalog_frame(lines, width, height)
-        lines[-2] = self.status_with_shift(lines[-2], width)
+        lines[-2] = self.status_with_indicators(lines[-2], width)
         lines = [clip(line, width) for line in lines]
         selected = {row: (first, min(last, len(lines[row]))) for row, (first, last) in selected.items()
                     if first < len(lines[row])}
@@ -2621,10 +2649,11 @@ def menu_panel(items, heading, index, width, height, submenu=False):
 
 
 # Map Windows extended keys and POSIX escape sequences to shared UI key names.
-WINDOWS_KEYS = {"H": "UP", "P": "DOWN", "K": "LEFT", "M": "RIGHT", "G": "HOME", "O": "END",
+WINDOWS_KEYS = {"H": "UP", "P": "DOWN", "K": "LEFT", "M": "RIGHT", "G": "HOME", "O": "END", "R": "INSERT",
                 "I": "PAGEUP", "Q": "PAGEDOWN", "S": "DELETE", ";": "F1", "<": "F2", "=": "F3",
                 ">": "F4", "?": "F5", "@": "F6", "A": "F7", "B": "F8", "C": "F9"}
 ANSI_KEYS = {"\x1b[A": "UP", "\x1b[B": "DOWN", "\x1b[C": "RIGHT", "\x1b[D": "LEFT",
+             "\x1b[2~": "INSERT",
              "\x1b[1;2D": "SHIFT_LEFT", "\x1b[1;2C": "SHIFT_RIGHT",
              "\x1b[H": "HOME", "\x1b[F": "END", "\x1b[1~": "HOME", "\x1b[4~": "END",
              "\x1b[7~": "HOME", "\x1b[8~": "END", "\x1b[3~": "DELETE", "\x1b[5~": "PAGEUP",
