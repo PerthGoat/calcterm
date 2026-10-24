@@ -89,6 +89,8 @@ a partial selection to its left/right edge.
 
 **Insert** toggles insertion mode with overwrite typing: when **INS** is shown, typed
 characters replace existing characters at the cursor. Typing at the end appends text.
+The character that would be overwritten is highlighted; at the end of the line,
+the normal cursor is shown. This preview also works with syntax colors off.
 Selected text is replaced as a unit. The mode also applies to the equation editor,
 table setup, and new Problem name field. Menu, Catalog, and history insertions keep
 their insertion behavior. The mode starts off when the app opens.

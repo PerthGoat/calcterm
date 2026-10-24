@@ -1,9 +1,10 @@
+import io
 from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
 
-from calc_term import CalcError, ConsoleApp, display_width
+from calc_term import CalcError, ConsoleApp, Terminal, display_width
 
 
 class EditingModeTests(unittest.TestCase):
@@ -16,6 +17,58 @@ class EditingModeTests(unittest.TestCase):
     def type_keys(self, text):
         for char in text:
             self.app.handle_key(char)
+
+    def input_highlight(self):
+        lines, selected, _ = self.app.frame()
+        row = len(lines) - 4
+        if row not in selected:
+            return None
+        first, last = selected[row]
+        return lines[row][first:last]
+
+    def test_overwrite_preview_follows_the_target_without_becoming_a_text_selection(self):
+        self.type_keys("12345")
+        self.app.handle_key("HOME")
+        self.app.handle_key("RIGHT")
+        self.app.handle_key("INSERT")
+        self.assertEqual(self.input_highlight(), "2")
+        self.assertIsNone(self.app.input_selection)
+        self.type_keys("9")
+        self.assertEqual(self.app.text, "19345")
+        self.assertEqual(self.input_highlight(), "3")
+        self.app.handle_key("BACKSPACE")
+        self.assertEqual((self.app.text, self.app.cursor), ("1345", 1))
+        self.assertEqual(self.input_highlight(), "3")
+        self.app.handle_key("END")
+        self.assertIsNone(self.input_highlight())
+        self.assertIsNotNone(self.app.frame()[2])
+        self.app.handle_key("HOME")
+        self.app.handle_key("INSERT")
+        self.assertIsNone(self.input_highlight())
+        self.app.handle_key("INSERT")
+        self.app.calculator.calculate("2+2")
+        self.app.handle_key("UP")
+        lines, selected, _ = self.app.frame()
+        self.assertNotIn(len(lines) - 4, selected)
+
+    def test_overwrite_preview_keeps_wide_characters_visible_and_works_without_syntax_colors(self):
+        source = "数" * 100
+        self.type_keys(source)
+        for _ in range(20):
+            self.app.handle_key("LEFT")
+        self.app.handle_key("INSERT")
+        self.app.command(":colors off")
+        lines, selected, cursor = self.app.frame(40, 12)
+        first, last = selected[len(lines) - 4]
+        self.assertEqual(lines[-4][first:last], "数")
+        self.assertIsNone(cursor)
+        self.assertEqual((self.app.text, self.app.cursor), (source, 80))
+        self.assertIsNone(self.app.input_selection)
+        self.assertTrue(all(display_width(line) <= 40 for line in lines))
+        with patch("sys.stdout", new_callable=io.StringIO) as output, \
+                patch("shutil.get_terminal_size", return_value=(41, 12)):
+            Terminal().render(self.app)
+        self.assertIn("\x1b[7m数\x1b[0m", output.getvalue())
 
     def test_insert_key_toggles_overwrite_typing_and_typing_at_end_appends(self):
         self.assertFalse(self.app.insert_mode)
@@ -43,6 +96,7 @@ class EditingModeTests(unittest.TestCase):
             self.app.handle_key("SHIFT_RIGHT")
         self.app.handle_key("INSERT")
         self.assertEqual(self.app.input_selection, (3, 6))
+        self.assertEqual(self.input_highlight(), "345")
         self.type_keys("9")
         self.assertEqual((self.app.text, self.app.cursor), ("12+9+6", 4))
         self.app.handle_key("ENTER")
@@ -72,11 +126,13 @@ class EditingModeTests(unittest.TestCase):
         self.app.handle_key("F7")
         self.app.handle_key("HOME")
         self.app.handle_key("INSERT")
+        self.assertEqual(self.input_highlight(), "1")
         self.type_keys("4")
         self.assertEqual(self.app.equation_text, "423x")
         self.app.handle_key("F8")
         self.app.handle_key("TAB")
         self.app.handle_key("HOME")
+        self.assertEqual(self.input_highlight(), "0")
         self.type_keys("2")
         self.app.handle_key("TAB")
         self.app.handle_key("HOME")
@@ -87,6 +143,9 @@ class EditingModeTests(unittest.TestCase):
         self.type_keys("ABCD")
         self.app.handle_key("HOME")
         self.app.handle_key("RIGHT")
+        lines, selected, _ = self.app.frame()
+        row, (first, last) = next(iter(selected.items()))
+        self.assertEqual(lines[row][first:last], "B")
         self.type_keys("Z")
         self.assertEqual(self.app.problem_dialog_text, "AZCD")
         self.app.handle_key("ENTER")

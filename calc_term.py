@@ -2054,6 +2054,19 @@ class ConsoleApp:
         insertion = "INS" if self.insert_mode else "   "
         return clip(f" {self.problem_name} | {indicator} | {insertion} | {text.lstrip()}", width)
 
+    def overwrite_span(self, text, position, column=0, offset=0) -> tuple[int, int] | None:
+        if self.insert_mode and 0 <= position < len(text):
+            first = column + position - offset
+            return first, first + 1
+        return None
+
+    def edit_window_start(self, text, position, available):
+        focus = position + (1 if self.insert_mode and position < len(text) else 0)
+        start = max(0, focus - available + 1)
+        while display_width(text[start:focus]) >= available:
+            start += 1
+        return start
+
     def equation_frame(self, width, height, menu_title):
         rows = height - 7
         first = min(max(0, self.equation_index - rows + 1), max(0, 99 - rows))
@@ -2076,13 +2089,15 @@ class ConsoleApp:
             lines.append(line)
         prefix = f"{EQUATION_NAMES[self.equation_index]}(x)="
         available = width - display_width(prefix) - 1
-        start = max(0, self.equation_cursor - available + 1)
-        while display_width(self.equation_text[start:self.equation_cursor]) >= available:
-            start += 1
+        start = self.edit_window_start(self.equation_text, self.equation_cursor, available)
         lines += ["-" * width, prefix + self.equation_text[start:], "-" * width]
         self.highlight_expression(len(lines) - 2, prefix)
         self.highlight_expression(len(lines) - 2, self.equation_text, column=len(prefix), offset=start)
         cursor = (height - 3, display_width(prefix + self.equation_text[start:self.equation_cursor]) + 1)
+        preview = self.overwrite_span(self.equation_text, self.equation_cursor, column=len(prefix), offset=start)
+        if preview is not None:
+            selected[len(lines) - 2] = preview
+            cursor = None
         lines += [f" Equation {self.equation_index + 1}/99 | Ctrl+T: check/uncheck | F8: table",
                   self.message]
         lines[-2] = self.status_with_indicators(lines[-2], width)
@@ -2201,17 +2216,20 @@ class ConsoleApp:
             lines.append(content)
         lines.append("-" * width)
         cursor = None
+        selected = {}
         field = self.table_edit_field
         if field is not None:
             prefix = ("Start", "Step")[field] + "="
             text = self.table_fields[field]
             available = width - len(prefix) - 1
-            first = max(0, self.table_cursor - available + 1)
-            while display_width(text[first:self.table_cursor]) >= available:
-                first += 1
+            first = self.edit_window_start(text, self.table_cursor, available)
             lines.append(prefix + text[first:])
             self.highlight_expression(len(lines) - 1, text, column=len(prefix), offset=first)
             cursor = (height - 3, len(prefix) + display_width(text[first:self.table_cursor]) + 1)
+            preview = self.overwrite_span(text, self.table_cursor, column=len(prefix), offset=first)
+            if preview is not None:
+                selected[len(lines) - 1] = preview
+                cursor = None
         else:
             lines.append("Tab: start/step | F7: equations | F8: close")
         first_column = self.table_column + 1 if names else 0
@@ -2219,7 +2237,7 @@ class ConsoleApp:
                   f" Row {self.table_row} | equations {first_column}-{self.table_column + len(visible)}/{len(names)} | arrows: scroll | Home: reset",
                   self.message]
         lines[-2] = self.status_with_indicators(lines[-2], width)
-        return [clip(line, width) for line in lines], {}, cursor
+        return [clip(line, width) for line in lines], selected, cursor
 
     def open_catalog(self):
         if self.equation_open and not self.commit_equation():
@@ -2408,9 +2426,7 @@ class ConsoleApp:
             box_width = min(width - 2, 64)
             inside = box_width - 4
             if self.problem_dialog == "new":
-                start = max(0, self.problem_dialog_cursor - inside + 1)
-                while display_width(self.problem_dialog_text[start:self.problem_dialog_cursor]) >= inside:
-                    start += 1
+                start = self.edit_window_start(self.problem_dialog_text, self.problem_dialog_cursor, inside)
                 content = ["New Problem", "Name:", self.problem_dialog_text[start:], "",
                            "Enter: create | Esc: cancel"]
             else:
@@ -2425,6 +2441,11 @@ class ConsoleApp:
             top, left = (height - len(panel)) // 2, (width - box_width) // 2
             if self.problem_dialog == "new":
                 cursor = (top + 4, left + 3 + display_width(self.problem_dialog_text[start:self.problem_dialog_cursor]))
+                preview = self.overwrite_span(self.problem_dialog_text, self.problem_dialog_cursor,
+                                              column=left + 2, offset=start)
+                if preview is not None:
+                    selected[top + 3] = preview
+                    cursor = None
             else:
                 begin = left + 2 + (9 if self.problem_delete_confirm else 0)
                 selected[top + 4] = (begin, begin + 6)
@@ -2516,6 +2537,8 @@ class ConsoleApp:
         available = width - 3
         input_selection = self.input_selection
         focus = self.cursor
+        if input_selection is None and index is None and self.insert_mode and self.cursor < len(self.text):
+            focus += 1
         if input_selection is not None and self.cursor == input_selection[0]:
             # Show selected text to the right of a selection moving left, too.
             cells = 0
@@ -2538,6 +2561,11 @@ class ConsoleApp:
             if first < last:
                 selected[input_row] = (2 + first - start_text, 2 + last - start_text)
             cursor = None
+        elif index is None:
+            preview = self.overwrite_span(self.text, self.cursor, column=2, offset=start_text)
+            if preview is not None:
+                selected[input_row] = preview
+                cursor = None
         c = self.calculator
         selection = ("selected " + self.history_part if index is not None else
                      "selected input" if self.input_selected else "recall " + self.history_insert)
