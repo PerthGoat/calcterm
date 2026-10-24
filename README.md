@@ -1,7 +1,8 @@
 # Console calculator
 
 `calc_term.py` is a Python terminal application with six configurable dropdown menus,
-a history panel that fills the terminal, an editable input line, and a status bar. It runs on
+a y1–y99 equation editor, a history panel that fills the terminal, an editable input line,
+and a status bar. It runs on
 Windows, macOS, and Linux. Python 3.10 or newer and SymPy are required; SymPy is the
 only direct external dependency (it installs mpmath for arbitrary-precision evaluation).
 
@@ -29,6 +30,7 @@ or Ctrl+D. The interactive app restores the terminal when it exits.
 | Key | Action |
 | --- | --- |
 | F1–F6 | Open/close Math, Units, Constants, Symbols, Options, and Help menus |
+| F7 | Open the equation editor, or save the current equation and close it |
 | Up / Down | Select history results and expressions while preserving the input cursor |
 | Enter with history selected | Insert the highlighted part at the input cursor |
 | Enter in input | Calculate the expression or execute a `:` command |
@@ -78,7 +80,40 @@ including in `--plain` and `--eval` modes. It is stored separately from settings
 `:clear` also clears saved history. The history limit still follows the terminal height,
 with a minimum of 30. Restoring history displays the recorded expressions and results
 without evaluating them again. Variables last for the current session; `:save` saves
-settings, units, and menus.
+settings, equations, units, and menus.
+
+## Equations
+
+Press **F7** to open the scrollable list of **y1 through y99**. Select a row with
+Up/Down or PageUp/PageDown and enter its formula in terms of `x` on the entry line.
+For example, type `4x` in the first slot; the entry line displays `y1(x)=4x`.
+Press F7 again to save the formula and return to the calculator. Then:
+
+```text
+y1(3)       = 12
+y1(1/3)     = 4/3
+y1(2+1)+5   = 17
+```
+
+Enter saves and selects the next equation. Moving between rows also saves the
+current formula. Left/Right, Home/End, Backspace, and Delete edit the formula;
+Ctrl+U clears it, and saving an empty formula removes that definition. Esc discards
+the current row's pending edit and closes the editor; previously saved rows remain.
+Invalid formulas stay in the editor for correction. Your calculator input and cursor
+are preserved while the editor is open.
+
+Equations accept one dimensionless scalar argument, including symbolic expressions.
+Their local `x` is independent of a calculator variable named `x`. Normal math functions,
+exact arithmetic, and the selected angle/output modes work inside equations. Formulas
+can call other slots, such as `y2(x)=y1(x)+x^2`; calls use their current definitions.
+Other variables and `ans` also use their values at call time. Undefined slots and
+circular references report errors when called. The names `y1` through `y99` are
+reserved for equation calls and cannot be assigned ordinary variable values.
+
+Use **`:save`** after returning to the calculator (or Save configuration in F5) to
+keep equations across restarts. They are stored in the settings JSON as an `equations`
+object, for example `"equations": {"y1": "4x", "y99": "x^2+1"}`. Saved equations
+can also be called in `--plain` and `--eval` modes.
 
 ## Math
 

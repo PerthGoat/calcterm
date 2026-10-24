@@ -18,6 +18,7 @@ import re
 import shutil
 import sys
 import time
+from typing import cast
 import unicodedata
 
 # Python's default decimal string limit would truncate the usefulness of exact
@@ -454,6 +455,7 @@ RESERVED = {"pi": sp.pi, "π": sp.pi, "e": sp.E, "E": sp.E, "i": sp.I, "I": sp.I
 FUNCTIONS = {"sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "sqrt", "cbrt",
              "exp", "ln", "log", "abs", "floor", "ceil", "factorial", "simplify", "expand", "factor",
              "diff", "integrate", "solve", "subs", "approx", "min", "max"}
+EQUATION_NAMES = tuple(f"y{i}" for i in range(1, 100))
 TRANSLATE = str.maketrans({"→": "->", "⇒": "=>", "×": "*", "÷": "/", "−": "-", "²": "^2", "³": "^3",
                            "≤": "<=", "≥": ">=", "≠": "!="})
 
@@ -495,10 +497,14 @@ def decimal_literals(text: str, registry: UnitRegistry) -> str:
 class Parser:
     """Pratt parser with a strict function allowlist and exact numeric tokens."""
 
-    def __init__(self, calculator, text, unit_only=False):
+    def __init__(self, calculator, text, unit_only=False, local_variables=None,
+                 equation_stack=(), validating_equation=False):
         # Conversion targets use a restricted grammar without variables or functions.
         self.calculator = calculator
         self.unit_only = unit_only
+        self.local_variables = local_variables or {}
+        self.equation_stack = equation_stack
+        self.validating_equation = validating_equation
         text = decimal_literals(text, calculator.registry)
         self.tokens = []
         position = 0
@@ -575,7 +581,7 @@ class Parser:
                 raise CalcError("A physical constant is not a conversion target.")
             left = Quantity(unit.scale + (0 if self.unit_only else unit.offset), unit.dims, unit)
         elif kind == "name" and not self.unit_only and token not in BITWISE:
-            if self.peek()[1] == "(" and token in FUNCTIONS:
+            if self.peek()[1] == "(" and (token in FUNCTIONS or token in EQUATION_NAMES):
                 self.take()
                 args = []
                 if self.peek()[1] != ")":
@@ -585,14 +591,21 @@ class Parser:
                             break
                         self.take()
                 self.expect(")")
-                left = self.calculator.function(token, args)
+                if token in EQUATION_NAMES:
+                    left = self.calculator.equation(token, args, self.equation_stack,
+                                                    self.validating_equation)
+                else:
+                    left = self.calculator.function(token, args)
+            elif token in EQUATION_NAMES:
+                raise CalcError(f"Use {token}(expression) to call an equation.")
             elif token in RESERVED:
                 left = Quantity(RESERVED[token])
             elif token == "ans":
                 left = self.calculator.answer
             else:
                 # Unassigned names remain symbolic rather than being treated as errors.
-                left = self.calculator.variables.get(token, Quantity(sp.Symbol(token)))
+                left = self.local_variables.get(token,
+                    self.calculator.variables.get(token, Quantity(sp.Symbol(token))))
         else:
             raise CalcError(f"Expected a number, variable, unit, or parenthesis; found '{token or 'end of input'}'.")
 
@@ -673,6 +686,7 @@ class Calculator:
     def __init__(self, mode="radian", precision=50, output_mode="exact"):
         self.registry = UnitRegistry()
         self.variables = {}
+        self.equations = {}
         self.history = deque(maxlen=30)
         self.answer = Quantity(sp.S.Zero)
         self.unit_definitions = {}
@@ -702,10 +716,10 @@ class Calculator:
         precision = self.precision if self.output_mode == "approximate" else None
         return self.registry.format(quantity, precision=precision)
 
-    def parse(self, text):
+    def parse(self, text, **context):
         # Translate library/parser failures into errors suitable for all UI modes.
         try:
-            return Parser(self, normalize_input(text)).parse()
+            return Parser(self, normalize_input(text), **context).parse()
         except CalcError:
             raise
         except (ValueError, TypeError, ZeroDivisionError, RecursionError, OverflowError, NotImplementedError) as exc:
@@ -735,7 +749,8 @@ class Calculator:
             text, assignment = (part.strip() for part in text.split("->"))
             if not re.fullmatch(r"[^\W\d_][^\W_]*", assignment, re.UNICODE):
                 raise CalcError("A variable name starts with a letter and contains letters or digits.")
-            if assignment in RESERVED or assignment in FUNCTIONS or assignment in BITWISE or assignment == "ans":
+            if (assignment in RESERVED or assignment in FUNCTIONS or assignment in BITWISE
+                    or assignment in EQUATION_NAMES or assignment == "ans"):
                 raise CalcError(f"'{assignment}' is reserved.")
         if "=>" in text:
             if text.count("=>") != 1:
@@ -777,6 +792,39 @@ class Calculator:
 
     def calculate(self, text):
         return self.format(self.evaluate(text))
+
+    def define_equation(self, name, expression):
+        """Validate a formula without changing ans, history, or session variables."""
+        if name not in EQUATION_NAMES:
+            raise CalcError("Equation names must be y1 through y99.")
+        if not isinstance(expression, str):
+            raise CalcError("Equation definitions must be strings.")
+        expression = expression.strip()
+        if not expression:
+            self.equations.pop(name, None)
+            return
+        value = self.parse(expression, local_variables={"x": Quantity(sp.Symbol("x"))},
+                           validating_equation=True)
+        if not isinstance(value.value, sp.Expr):
+            raise CalcError("An equation must produce a scalar expression.")
+        self.equations[name] = expression
+
+    def equation(self, name, args, stack=(), validating=False):
+        if len(args) != 1:
+            raise CalcError(f"Wrong number of arguments for {name}; use {name}(x).")
+        argument = args[0]
+        if not isinstance(argument.value, sp.Expr) or argument.dims != ZERO:
+            raise CalcError(f"{name} requires a dimensionless scalar argument.")
+        if validating:
+            # Forward references are allowed; resolve formulas when called.
+            # SymPy's dynamic function factory produces an applied expression here.
+            return Quantity(cast(sp.Expr, sp.Function(name)(argument.value)))
+        if name not in self.equations:
+            raise CalcError(f"{name}(x) is not defined. Use F7 to enter an equation.")
+        if name in stack:
+            raise CalcError("Circular equation reference: " + " -> ".join((*stack, name)))
+        return self.parse(self.equations[name], local_variables={"x": argument},
+                          equation_stack=(*stack, name))
 
     def define_unit(self, name, expression):
         # A custom unit supplies an SI scale and dimensions from a numeric expression.
@@ -995,6 +1043,8 @@ HELP_LINES = [
     "Left/Right: move cursor; Home/End: line ends; Tab: input/history focus.",
     "Esc: close menu or return to input; Ctrl+C / Ctrl+D: quit; Ctrl+L: redraw.",
     "F1-F6: menus; Up/Down or PageUp/PageDown: select; Enter: choose.",
+    "F7: equations y1-y99; Enter saves; Up/Down selects; Esc cancels current edit.",
+    "Enter 4x for y1(x); return with F7 and calculate y1(3) to get 12.",
     "Type in a menu to filter; Backspace removes a filter character.",
     "Submenus: Enter/Right opens; Right on a leaf switches menus; Left/Esc goes back.",
     "3->x assigns x; x/X differ; _ft/_FT are the same unit.",
@@ -1006,7 +1056,7 @@ HELP_LINES = [
     ":menu 1 Favorites    :menuadd 1 Square | ^2    :menuclear 1",
     ":recall result|expression    :unset x    :vars    :clear    :save    :quit",
     "Decimals/fractions stay exact; approx(pi,100) requests a decimal approximation.",
-    "Settings, custom units, and six menus are saved as JSON using :save.",
+    "Settings, equations, custom units, and six menus are saved using :save.",
 ]
 
 
@@ -1033,7 +1083,11 @@ class ConsoleApp:
         self.menu_index = 0
         self.menu_filter = ""
         self.menu_stack: list[tuple[dict, int, str]] = []
-        self.message = "F6: help | Enter: calculate | Up: history | :quit: exit"
+        self.equation_open = False
+        self.equation_index = 0
+        self.equation_text = ""
+        self.equation_cursor = 0
+        self.message = "F7: equations | F6: help | Enter: calculate | Up: history | :quit: exit"
         self.help_open = False
         self.running = True
         self._load_config()
@@ -1111,6 +1165,11 @@ class ConsoleApp:
                     progress = True
                 if not progress:
                     raise CalcError("Invalid or circular custom unit definitions: " + ", ".join(pending))
+            equations = data.get("equations", {})
+            if not isinstance(equations, dict):
+                raise CalcError("equations must be an object mapping y1-y99 to expressions.")
+            for name, expression in equations.items():
+                calculator.define_equation(name, expression)
             menus = validate_menus(data["menus"]) if "menus" in data else default_menus(calculator.registry)
             if "menus" in data and not any("items" in item for item in menus[1]["items"]):
                 menus[1]["items"] = categorize_unit_items(calculator.registry, menus[1]["items"])
@@ -1131,6 +1190,7 @@ class ConsoleApp:
         data = {"mode": self.calculator.mode, "precision": self.calculator.precision,
                 "output_mode": self.calculator.output_mode,
                 "history_insert": self.history_insert, "units": self.calculator.unit_definitions,
+                "equations": self.calculator.equations,
                 "menus": self.menus}
         temporary = self.config_path.with_name(self.config_path.name + ".tmp")
         try:
@@ -1282,13 +1342,31 @@ class ConsoleApp:
         if key in ("CTRL_C", "CTRL_D"):
             self.running = False
             return
+        if key == "F7":
+            if self.equation_open:
+                if self.commit_equation():
+                    self.equation_open = False
+            else:
+                self.open_menu = None
+                self.menu_stack.clear()
+                self.help_open = False
+                self.equation_open = True
+                self.load_equation()
+            return
         if key.startswith("F") and key[1:].isdigit() and 1 <= int(key[1:]) <= 6:
+            if self.equation_open:
+                if not self.commit_equation():
+                    return
+                self.equation_open = False
             number = int(key[1:]) - 1
             self.open_menu = None if self.open_menu == number else number
             self.menu_index = 0
             self.menu_filter = ""
             self.menu_stack.clear()
             self.help_open = False
+            return
+        if self.equation_open:
+            self.handle_equation_key(key)
             return
         if self.help_open:
             if key in ("ESC", "ENTER", "TAB"):
@@ -1382,6 +1460,84 @@ class ConsoleApp:
         elif len(key) == 1 and key.isprintable():
             self.insert(key)
 
+    def load_equation(self):
+        name = EQUATION_NAMES[self.equation_index]
+        self.equation_text = self.calculator.equations.get(name, "")
+        self.equation_cursor = len(self.equation_text)
+        self.message = "Enter/Up/Down: save and select | F7: save and close | Esc: cancel edit | :save keeps equations"
+
+    def commit_equation(self):
+        name = EQUATION_NAMES[self.equation_index]
+        try:
+            self.calculator.define_equation(name, self.equation_text)
+        except CalcError as exc:
+            self.message = "Error: " + str(exc)
+            return False
+        self.message = f"{name}(x)=" + self.equation_text.strip() + " | :save to keep equations."
+        return True
+
+    def handle_equation_key(self, key):
+        if key == "ESC":
+            self.equation_open = False
+            self.message = "Equation editor closed; current edit canceled. Use :save to keep saved equations."
+        elif key in ("UP", "DOWN", "PAGEUP", "PAGEDOWN", "ENTER", "TAB"):
+            if self.commit_equation():
+                delta = {"UP": -1, "DOWN": 1, "PAGEUP": -self.history_rows,
+                         "PAGEDOWN": self.history_rows, "ENTER": 1, "TAB": 1}[key]
+                self.equation_index = max(0, min(98, self.equation_index + delta))
+                self.load_equation()
+        elif key == "LEFT":
+            self.equation_cursor = max(0, self.equation_cursor - 1)
+        elif key == "RIGHT":
+            self.equation_cursor = min(len(self.equation_text), self.equation_cursor + 1)
+        elif key == "HOME":
+            self.equation_cursor = 0
+        elif key == "END":
+            self.equation_cursor = len(self.equation_text)
+        elif key == "CTRL_U":
+            self.equation_text, self.equation_cursor = "", 0
+        elif key == "BACKSPACE" and self.equation_cursor:
+            position = self.equation_cursor
+            self.equation_text = self.equation_text[:position - 1] + self.equation_text[position:]
+            self.equation_cursor -= 1
+        elif key == "DELETE":
+            position = self.equation_cursor
+            self.equation_text = self.equation_text[:position] + self.equation_text[position + 1:]
+        elif len(key) == 1 and key.isprintable():
+            position = self.equation_cursor
+            self.equation_text = self.equation_text[:position] + key + self.equation_text[position:]
+            self.equation_cursor += 1
+
+    def equation_frame(self, width, height, menu_title):
+        rows = height - 6
+        first = min(max(0, self.equation_index - rows + 1), max(0, 99 - rows))
+        lines = [menu_title, "Equations y1-y99 | F7: close | Enter: save"]
+        selected = {}
+        for offset in range(rows):
+            index = first + offset
+            if index >= 99:
+                lines.append("")
+                continue
+            name = EQUATION_NAMES[index]
+            active = index == self.equation_index
+            expression = self.equation_text if active else self.calculator.equations.get(name, "")
+            line = ("> " if active else "  ") + f"{name}(x)=" + expression
+            if active:
+                selected[len(lines)] = (0, len(line))
+            lines.append(line)
+        prefix = f"{EQUATION_NAMES[self.equation_index]}(x)="
+        available = width - display_width(prefix) - 1
+        start = max(0, self.equation_cursor - available + 1)
+        while display_width(self.equation_text[start:self.equation_cursor]) >= available:
+            start += 1
+        lines += ["-" * width, prefix + self.equation_text[start:]]
+        cursor = (height - 2, display_width(prefix + self.equation_text[start:self.equation_cursor]) + 1)
+        lines += [f" Equation {self.equation_index + 1}/99 | Up/Down: select | Ctrl+U: clear",
+                  self.message]
+        lines = [clip(line, width) for line in lines]
+        selected = {row: (begin, min(end, len(lines[row]))) for row, (begin, end) in selected.items()}
+        return lines, selected, cursor
+
     def frame(self, width=100, height=24):
         """Return plain text lines, selected character spans by row, and input cursor."""
         width, height = max(1, width), max(1, height)
@@ -1401,10 +1557,14 @@ class ConsoleApp:
         if width < 40 or height < 12:
             lines = ["Please resize the terminal to at least 40 columns and 12 rows.", self.message]
             return [clip(line, width) for line in lines[:height]], {}, None
-        label_width = max(1, (width - 28) // 6)
+        label_width = max(1, (width - 33) // 7)
         menu_titles = [f"F{i + 1} {menu['label']}" for i, menu in enumerate(self.menus)]
+        menu_titles.append("F7 Equations")
         if display_width("  ".join(menu_titles)) > width:
             menu_titles = [f"F{i + 1} {clip(menu['label'], label_width)}" for i, menu in enumerate(self.menus)]
+            menu_titles.append("F7 " + clip("Equations", label_width))
+        if self.equation_open:
+            return self.equation_frame(width, height, "  ".join(menu_titles))
         lines = ["  ".join(menu_titles), "-" * width]
         selected: dict[int, tuple[int, int]] = {}
         # Choose a visible history window that follows either the newest result
@@ -1557,13 +1717,13 @@ def menu_panel(items, heading, index, width, height, submenu=False):
 # Map Windows extended keys and POSIX escape sequences to shared UI key names.
 WINDOWS_KEYS = {"H": "UP", "P": "DOWN", "K": "LEFT", "M": "RIGHT", "G": "HOME", "O": "END",
                 "I": "PAGEUP", "Q": "PAGEDOWN", "S": "DELETE", ";": "F1", "<": "F2", "=": "F3",
-                ">": "F4", "?": "F5", "@": "F6"}
+                ">": "F4", "?": "F5", "@": "F6", "A": "F7"}
 ANSI_KEYS = {"\x1b[A": "UP", "\x1b[B": "DOWN", "\x1b[C": "RIGHT", "\x1b[D": "LEFT",
              "\x1b[H": "HOME", "\x1b[F": "END", "\x1b[1~": "HOME", "\x1b[4~": "END",
              "\x1b[7~": "HOME", "\x1b[8~": "END", "\x1b[3~": "DELETE", "\x1b[5~": "PAGEUP",
              "\x1b[6~": "PAGEDOWN", "\x1bOP": "F1", "\x1bOQ": "F2", "\x1bOR": "F3",
              "\x1bOS": "F4", "\x1b[11~": "F1", "\x1b[12~": "F2", "\x1b[13~": "F3",
-             "\x1b[14~": "F4", "\x1b[15~": "F5", "\x1b[17~": "F6",
+             "\x1b[14~": "F4", "\x1b[15~": "F5", "\x1b[17~": "F6", "\x1b[18~": "F7",
              "\x1bOH": "HOME", "\x1bOF": "END"}
 CONTROL_KEYS = {"\r": "ENTER", "\n": "ENTER", "\x1b": "ESC", "\t": "TAB", "\x08": "BACKSPACE",
                 "\x7f": "BACKSPACE", "\x03": "CTRL_C", "\x04": "CTRL_D", "\x15": "CTRL_U", "\x0c": "CTRL_L"}

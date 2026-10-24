@@ -151,6 +151,116 @@ class ConsoleTests(unittest.TestCase):
         self.assertEqual(cursor, (22, 3))
         self.assertFalse(selected)
 
+    def test_f7_equation_editor_and_calculator_call(self):
+        self.type_keys("y1(3)")
+        self.app.handle_key("F7")
+        self.type_keys("4x")
+        lines, selected, cursor = self.app.frame()
+        self.assertIn("F7 Equations", lines[0])
+        self.assertIn("y1(x)=4x", lines[2])
+        self.assertEqual(lines[-3], "y1(x)=4x")
+        self.assertEqual(lines[next(iter(selected))], "> y1(x)=4x")
+        self.assertEqual(cursor, (22, 9))
+        self.app.handle_key("F7")
+        self.assertFalse(self.app.equation_open)
+        self.assertEqual(self.app.text, "y1(3)")
+        self.assertEqual(self.app.cursor, 5)
+        self.app.handle_key("ENTER")
+        self.assertEqual(self.app.calculator.history[-1].line, "y1(3) = 12")
+
+    def test_equation_navigation_reaches_y99_and_tracks_selection_on_resize(self):
+        self.app.handle_key("F7")
+        self.type_keys("4x")
+        self.app.handle_key("DOWN")
+        self.type_keys("x^2")
+        self.app.handle_key("UP")
+        self.assertEqual(self.app.equation_text, "4x")
+        for _ in range(6):
+            self.app.handle_key("PAGEDOWN")
+        self.assertEqual(self.app.equation_index, 98)
+        self.type_keys("x+99")
+        for width, height in ((40, 12), (80, 24), (100, 120)):
+            lines, selected, cursor = self.app.frame(width, height)
+            self.assertEqual(len(lines), height)
+            self.assertIn("y99(x)=x+99", lines[-3])
+            self.assertIn("y99(x)=x+99", lines[next(iter(selected))])
+            self.assertLessEqual(cursor[1], width)
+            self.assertTrue(all(display_width(line) <= width for line in lines))
+        self.app.handle_key("F7")
+        self.assertEqual(self.app.calculator.calculate("y99(1)"), "100")
+        self.assertEqual(self.app.calculator.calculate("y2(3)"), "9")
+
+    def test_equation_editing_and_clearing(self):
+        self.app.handle_key("F7")
+        self.type_keys("4x+1")
+        self.app.handle_key("HOME")
+        self.app.handle_key("DELETE")
+        self.type_keys("2")
+        self.app.handle_key("END")
+        self.app.handle_key("BACKSPACE")
+        self.type_keys("3")
+        self.app.handle_key("LEFT")
+        self.app.handle_key("RIGHT")
+        self.app.handle_key("ENTER")
+        self.assertEqual(self.app.calculator.equations["y1"], "2x+3")
+        self.app.handle_key("UP")
+        self.app.handle_key("CTRL_U")
+        self.app.handle_key("F7")
+        self.assertNotIn("y1", self.app.calculator.equations)
+
+    def test_invalid_equation_can_be_corrected_or_canceled(self):
+        self.app.calculator.define_equation("y1", "4x")
+        self.app.handle_key("F7")
+        self.type_keys("+")
+        for key in ("DOWN", "ENTER", "F7", "F1"):
+            self.app.handle_key(key)
+            self.assertTrue(self.app.equation_open)
+            self.assertEqual(self.app.equation_index, 0)
+            self.assertEqual(self.app.equation_text, "4x+")
+            self.assertIn("Error:", self.app.message)
+            self.assertEqual(self.app.calculator.equations["y1"], "4x")
+        self.type_keys("1")
+        self.app.handle_key("ENTER")
+        self.assertEqual(self.app.calculator.equations["y1"], "4x+1")
+        self.type_keys("x+")
+        self.app.handle_key("ESC")
+        self.assertFalse(self.app.equation_open)
+        self.assertNotIn("y2", self.app.calculator.equations)
+
+    def test_equations_save_and_restore_with_forward_references(self):
+        self.app.calculator.define_equation("y1", "y99(x)+1")
+        self.app.calculator.define_equation("y99", "4x")
+        self.app.command(":save")
+        restored = ConsoleApp(config_path=self.config_path)
+        self.assertEqual(restored.calculator.equations, self.app.calculator.equations)
+        self.assertFalse(restored.calculator.variables)
+        self.assertEqual(restored.calculator.calculate("y1(3)"), "13")
+
+    def test_invalid_saved_equations_leave_config_intact_and_load_atomically(self):
+        for equations in ([], {"y0": "x"}, {"y1": 4}, {"y1": "4x", "y2": "x+"}):
+            with self.subTest(equations=equations):
+                configuration = json.dumps({"mode": "degree", "equations": equations})
+                self.config_path.write_text(configuration, encoding="utf-8")
+                restored = ConsoleApp(config_path=self.config_path)
+                self.assertIn("Config error:", restored.message)
+                self.assertEqual(restored.calculator.mode, "radian")
+                self.assertFalse(restored.calculator.equations)
+                self.assertEqual(self.config_path.read_text(encoding="utf-8"), configuration)
+
+    def test_equation_long_wide_input_scrolls_and_f7_closes_other_overlays(self):
+        self.app.handle_key("F6")
+        self.app.handle_key("ENTER")
+        self.app.handle_key("F7")
+        self.assertFalse(self.app.help_open)
+        self.assertIsNone(self.app.open_menu)
+        self.type_keys("数" * 100)
+        lines, _, cursor = self.app.frame(40, 12)
+        self.assertLessEqual(cursor[1], 40)
+        self.assertTrue(all(display_width(line) <= 40 for line in lines))
+        self.app.handle_key("F1")
+        self.assertFalse(self.app.equation_open)
+        self.assertEqual(self.app.open_menu, 0)
+
     def test_recent_calculations_and_browsing_older_entries(self):
         for i in range(10):
             self.app.calculator.evaluate(str(i))
@@ -921,6 +1031,21 @@ class ConsoleTests(unittest.TestCase):
         with patch("os.name", "nt"), patch.dict("sys.modules", {"msvcrt": keyboard}):
             self.assertIsNone(Terminal().read_key(timeout=0))
             keyboard.getwch.assert_not_called()
+
+    def test_windows_f7_key_opens_equations(self):
+        keyboard = Mock()
+        keyboard.getwch.side_effect = ["\x00", "A"]
+        with patch("os.name", "nt"), patch.dict("sys.modules", {"msvcrt": keyboard}):
+            self.app.handle_key(Terminal().read_key())
+        self.assertTrue(self.app.equation_open)
+
+    def test_posix_f7_key_opens_equations(self):
+        with patch("os.name", "posix"), patch("sys.stdin") as stdin, \
+                patch("select.select", return_value=([0], [], [])), \
+                patch("os.read", side_effect=[b"\x1b", b"[", b"1", b"8", b"~"]):
+            stdin.fileno.return_value = 0
+            self.app.handle_key(Terminal().read_key())
+        self.assertTrue(self.app.equation_open)
 
     def test_posix_key_timeout_leaves_input_unread(self):
         with patch("os.name", "posix"), patch("select.select", return_value=([], [], [])), \

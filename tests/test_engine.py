@@ -443,5 +443,89 @@ class ExactArithmeticTests(unittest.TestCase):
         self.assertEqual(value.dims, ZERO)
 
 
+class EquationTests(unittest.TestCase):
+    def setUp(self):
+        self.calc = Calculator()
+
+    def test_equations_support_implicit_multiplication_and_expression_arguments(self):
+        self.calc.define_equation("y1", "4x")
+        for source, expected in {"y1(3)": "12", "y1(1/3)": "4/3",
+                                 "2y1(3)+1": "25", "y1(2+1)": "12",
+                                 "y1(y1(3))": "48", "y1(t+1)": "4*t + 4"}.items():
+            with self.subTest(source=source):
+                self.assertEqual(self.calc.calculate(source), expected)
+        self.assertEqual(self.calc.history[-1].source, "y1(t+1)")
+
+    def test_local_x_does_not_use_or_change_session_x(self):
+        self.calc.calculate("100->x")
+        self.calc.define_equation("y1", "x^2+1")
+        self.assertEqual(self.calc.answer.value, 100)
+        self.assertEqual(len(self.calc.history), 1)
+        self.assertEqual(self.calc.calculate("y1(3)"), "10")
+        self.assertEqual(self.calc.calculate("x"), "100")
+        self.assertEqual(self.calc.calculate("y1(2)->a"), "5")
+        self.assertEqual(self.calc.calculate("a+ans"), "10")
+
+    def test_forward_references_resolve_current_definitions_with_local_arguments(self):
+        self.calc.define_equation("y99", "y1(x+1)+x")
+        with self.assertRaisesRegex(CalcError, "y1.*not defined"):
+            self.calc.calculate("y99(3)")
+        self.calc.define_equation("y1", "4x")
+        self.assertEqual(self.calc.calculate("y99(3)"), "19")
+        self.calc.define_equation("y1", "2x")
+        self.assertEqual(self.calc.calculate("y99(3)"), "11")
+        self.assertNotIn("x", self.calc.variables)
+
+    def test_equations_follow_angle_and_output_modes(self):
+        self.calc.define_equation("y1", "sin(x)")
+        self.calc.set_mode("degree")
+        self.assertEqual(self.calc.calculate("y1(30)"), "1/2")
+        self.calc.set_mode("radian")
+        self.assertEqual(self.calc.calculate("y1(pi/6)"), "1/2")
+        self.calc.define_equation("y2", "x/3")
+        self.calc.set_output_mode("approximate")
+        self.calc.set_precision(6)
+        self.assertEqual(self.calc.calculate("y2(1)"), "0.333333")
+        self.assertEqual(self.calc.answer.value, sp.Rational(1, 3))
+
+    def test_bad_definitions_preserve_previous_formula_and_state(self):
+        self.calc.calculate("7->x")
+        self.calc.define_equation("y1", "4x")
+        for formula in ("4x+", "x->a", "1/0", "[x,1]", "True", "y2()", "x.__class__"):
+            with self.subTest(formula=formula), self.assertRaises(CalcError):
+                self.calc.define_equation("y1", formula)
+            self.assertEqual(self.calc.equations["y1"], "4x")
+            self.assertEqual(self.calc.answer.value, 7)
+            self.assertEqual(len(self.calc.history), 1)
+
+    def test_undefined_circular_and_bad_calls_leave_ans_and_assignments_intact(self):
+        self.calc.calculate("7->x")
+        self.calc.define_equation("y1", "y2(x)")
+        self.calc.define_equation("y2", "y1(x)")
+        for source, error in (("y99(3)", "not defined"), ("y1(3)", "Circular"),
+                              ("y1()", "arguments"), ("y1(1,2)", "arguments"),
+                              ("y1(True)", "scalar"), ("y1(1_m)", "dimensionless"),
+                              ("y1", "call an equation"), ("3->y1", "reserved")):
+            with self.subTest(source=source), self.assertRaisesRegex(CalcError, error):
+                self.calc.calculate(source)
+            self.assertEqual(self.calc.answer.value, 7)
+            self.assertEqual(self.calc.variables["x"].value, 7)
+            self.assertTrue(self.calc.history[-1].is_error)
+        self.calc.define_equation("y1", "y1(x)")
+        with self.assertRaisesRegex(CalcError, "Circular"):
+            self.calc.calculate("y1(3)")
+
+    def test_all_99_slots_and_clearing(self):
+        for i in range(1, 100):
+            self.calc.define_equation(f"y{i}", f"{i}x")
+            self.assertEqual(self.calc.calculate(f"y{i}(2)"), str(2 * i))
+        for name in ("y0", "y100", "y01", "Y1", "sin"):
+            with self.subTest(name=name), self.assertRaises(CalcError):
+                self.calc.define_equation(name, "4x")
+        self.calc.define_equation("y1", "  ")
+        with self.assertRaisesRegex(CalcError, "not defined"):
+            self.calc.calculate("y1(3)")
+
+
 if __name__ == "__main__":
     unittest.main()
