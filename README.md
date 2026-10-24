@@ -37,6 +37,7 @@ or Ctrl+D. The interactive app restores the terminal when it exits.
 | Up / Down | Select history results and expressions while preserving the input cursor |
 | Enter with history selected | Insert the highlighted part at the input cursor |
 | Enter in input | Calculate and select the expression, or execute a `:` command |
+| Shift+Enter in input | Calculate an approximate result for this submission |
 | Left / Right | Move the input cursor; open/return from submenus or switch top menus |
 | Shift+Left / Shift+Right | Extend or shrink the input selection |
 | Home / End | Move to the input ends or the first/last dropdown item |
@@ -54,6 +55,16 @@ can edit normally. Home/End also clears the selection and moves to the correspon
 end. Enter again recalculates the expression. History, menu, and Catalog insertions
 replace selected input. Failed calculations use the same selection behavior; `:` commands
 continue to clear the input after successful execution.
+
+**Shift+Enter** displays this calculation's result approximately at the configured
+precision, in either exact or approximate mode. It leaves the output mode unchanged;
+ordinary Enter continues to follow that setting. The approximate display is saved in
+history, while `ans` and assignments retain their underlying exact values.
+
+On Windows, the app detects Shift with Enter directly. On macOS/Linux it accepts
+CSI-u and [xterm modified-key reports](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html#h2-Key-Modifiers)
+and requests modified-key reporting while running. The terminal must distinguish
+Shift+Enter from ordinary Enter for the shortcut to work.
 
 Hold **Shift** while pressing Left or Right to select part of the input. Reversing
 direction shrinks the selection; continuing past its starting point selects in the

@@ -712,9 +712,9 @@ class Calculator:
             raise CalcError("Output mode must be exact or approximate.")
         self.output_mode = mode
 
-    def format(self, quantity):
+    def format(self, quantity, approximate=False):
         # The output preference affects presentation rather than stored precision.
-        precision = self.precision if self.output_mode == "approximate" else None
+        precision = self.precision if approximate or self.output_mode == "approximate" else None
         return self.registry.format(quantity, precision=precision)
 
     def parse(self, text, **context):
@@ -726,18 +726,18 @@ class Calculator:
         except (ValueError, TypeError, ZeroDivisionError, RecursionError, OverflowError, NotImplementedError) as exc:
             raise CalcError(f"Cannot evaluate this expression: {exc}") from None
 
-    def evaluate(self, text, record=True):
+    def evaluate(self, text, record=True, *, approximate=False):
         # Failed input is recorded here; only successful evaluation updates ans.
         source = text.strip()
         try:
-            return self._evaluate(source, record)
+            return self._evaluate(source, record, approximate)
         except CalcError as exc:
             if record and source:
                 # Keep invalid input verbatim, including malformed numeric literals.
                 self.history.append(HistoryEntry(source, str(exc), is_error=True))
             raise
 
-    def _evaluate(self, source, record):
+    def _evaluate(self, source, record, approximate=False):
         # Peel off assignment and conversion arrows before parsing the expression.
         # This also permits a conversion followed by assignment, such as 3_in=>_ft->x.
         text = normalize_input(source)
@@ -783,7 +783,7 @@ class Calculator:
             value = self.parse(text)
         value.checked()
         # Finish preparing history before committing the result to ans or a variable.
-        entry = HistoryEntry(decimal_literals(source, self.registry), self.format(value)) if record else None
+        entry = HistoryEntry(decimal_literals(source, self.registry), self.format(value, approximate=approximate)) if record else None
         if assignment:
             self.variables[assignment] = value
         self.answer = value
@@ -791,8 +791,8 @@ class Calculator:
             self.history.append(entry)
         return value
 
-    def calculate(self, text):
-        return self.format(self.evaluate(text))
+    def calculate(self, text, *, approximate=False):
+        return self.format(self.evaluate(text, approximate=approximate), approximate=approximate)
 
     def define_equation(self, name, expression):
         """Validate a formula without changing ans, history, or session variables."""
@@ -1098,6 +1098,7 @@ def validate_menus(menus):
 
 HELP_LINES = [
     "Up/Down: select history results/expressions; Enter: insert the highlighted part.",
+    "Shift+Enter in input: approximate this result; the configured output mode stays unchanged.",
     "After calculation: input stays selected; type to replace; Backspace/Delete clears.",
     "Left/Right on selected input: move to the beginning/end for editing.",
     "Shift+Left/Right: select part of the input; type or Backspace/Delete replaces it.",
@@ -1647,7 +1648,7 @@ class ConsoleApp:
         else:
             raise CalcError("Unknown command. Use :help for commands.")
 
-    def submit(self):
+    def submit(self, approximate=False):
         # Both interactive and plain mode share this command/calculation path.
         if not self.text.strip():
             return
@@ -1656,7 +1657,7 @@ class ConsoleApp:
                 self.command(self.text.strip())
                 self.clear_input()
             else:
-                self.calculator.evaluate(self.text)
+                self.calculator.evaluate(self.text, approximate=approximate)
                 self.message = self.calculator.history[-1].line
                 self.save_history()
                 self.select_all_input()
@@ -1787,7 +1788,7 @@ class ConsoleApp:
                 self.browse_history(-1)
             else:
                 self.history_index = None
-        elif key == "ENTER":
+        elif key in ("ENTER", "SHIFT_ENTER"):
             if self.history_index is not None:
                 entry = history[self.history_index]
                 part = self.history_part
@@ -1798,7 +1799,7 @@ class ConsoleApp:
                 self.insert(recalled)
                 self.message = "Inserted history " + part + " at the cursor."
             else:
-                self.submit()
+                self.submit(approximate=key == "SHIFT_ENTER")
         elif key in ("SHIFT_LEFT", "SHIFT_RIGHT"):
             self.history_index = None
             if self._selected_input != self.text or self._selection_anchor is None:
@@ -2491,12 +2492,35 @@ CONTROL_KEYS = {"\r": "ENTER", "\n": "ENTER", "\x1b": "ESC", "\t": "TAB", "\x08"
 
 
 def windows_shift_pressed():
-    # msvcrt uses the same arrow scan codes with and without Shift.
+    # msvcrt uses the same arrow/Enter codes with and without Shift.
     import ctypes
     user32 = ctypes.WinDLL("user32", use_last_error=True)
     user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
     user32.GetAsyncKeyState.restype = ctypes.c_short
     return bool(user32.GetAsyncKeyState(0x10) & 0x8000)
+
+
+def modified_terminal_key(sequence):
+    """Decode CSI-u or xterm modifyOtherKeys reports for character keys."""
+    match = re.fullmatch(r"\x1b\[(\d+);(\d+)u", sequence)
+    if match:
+        codepoint, modifiers = map(int, match.groups())
+    else:
+        match = re.fullmatch(r"\x1b\[27;(\d+);(\d+)~", sequence)
+        if not match:
+            return "UNKNOWN"
+        modifiers, codepoint = map(int, match.groups())
+    if not 0 <= codepoint <= 0x10ffff or modifiers < 1:
+        return "UNKNOWN"
+    modifiers = (modifiers - 1) & 63  # Ignore Caps Lock / Num Lock flags.
+    if codepoint in (10, 13) and modifiers in (0, 1, 4, 5):
+        return "SHIFT_ENTER" if modifiers & 1 else "ENTER"
+    if modifiers in (4, 5) and 65 <= codepoint <= 122:
+        return CONTROL_KEYS.get(chr(codepoint & 31), "UNKNOWN")
+    if modifiers in (0, 1):
+        char = chr(codepoint)
+        return CONTROL_KEYS.get(char, char if char.isprintable() else "UNKNOWN")
+    return "UNKNOWN"
 
 
 class Terminal:
@@ -2532,12 +2556,17 @@ class Terminal:
             tty.setraw(sys.stdin.fileno())
         # Use the alternate screen so the user's previous terminal contents survive exit.
         sys.stdout.write("\x1b[?1049h\x1b[2J\x1b[H")
+        if os.name != "nt":
+            # Ask supporting terminals to distinguish Shift+Enter from Enter.
+            sys.stdout.write("\x1b[>4;2m")
         sys.stdout.flush()
         return self
 
     def __exit__(self, *args):
         # Restore the cursor, screen, and console settings even when the app raises.
         try:
+            if os.name != "nt":
+                sys.stdout.write("\x1b[>4m")
             sys.stdout.write("\x1b[?25h\x1b[?1049l")
             sys.stdout.flush()
         finally:
@@ -2570,6 +2599,8 @@ class Terminal:
                 # Join UTF-16 surrogate pairs into one Unicode character.
                 following = msvcrt.getwch()
                 return (char + following).encode("utf-16", "surrogatepass").decode("utf-16")
+            if char in ("\r", "\n") and windows_shift_pressed():
+                return "SHIFT_ENTER"
         else:
             # Read bytes directly: TextIO buffering can otherwise swallow pasted keys.
             import select
@@ -2586,6 +2617,9 @@ class Terminal:
                     text = sequence.decode("ascii", "ignore")
                     if text in ANSI_KEYS:
                         return ANSI_KEYS[text]
+                    modified = modified_terminal_key(text)
+                    if modified != "UNKNOWN":
+                        return modified
                     if len(sequence) > 2 and sequence[-1:] in b"~ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz":
                         break
                 return "ESC" if sequence == b"\x1b" else "UNKNOWN"

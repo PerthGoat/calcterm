@@ -377,6 +377,35 @@ class ExactArithmeticTests(unittest.TestCase):
         self.assertEqual(self.calc.calculate("x"), "1/3")
         self.assertEqual(self.calc.history[0].result, "0.33333")
 
+    def test_per_calculation_approximation_preserves_mode_and_exact_state(self):
+        for mode in ("exact", "approximate"):
+            with self.subTest(mode=mode):
+                self.calc.set_output_mode(mode)
+                self.calc.set_precision(6)
+                self.assertEqual(self.calc.calculate("1/3->x", approximate=True), "0.333333")
+                self.assertEqual(self.calc.history[-1].result, "0.333333")
+                self.assertEqual(self.calc.history[-1].source, "1/3->x")
+                self.assertEqual(self.calc.variables["x"].value, sp.Rational(1, 3))
+                self.assertEqual(self.calc.answer.value, sp.Rational(1, 3))
+                self.assertEqual(self.calc.output_mode, mode)
+                self.assertEqual(self.calc.calculate("x*3"), "1")
+                self.assertEqual(self.calc.calculate("x"), "1/3" if mode == "exact" else "0.333333")
+
+    def test_per_calculation_approximation_supports_units_lists_and_errors(self):
+        self.calc.set_precision(6)
+        for source, expected in {"sqrt(2)": "1.41421", "3_in=>_ft": "0.25_ft",
+                                 "solve(y^2-2,y)": "[-1.41421, 1.41421]", "True": "True"}.items():
+            with self.subTest(source=source):
+                self.assertEqual(self.calc.calculate(source, approximate=True), expected)
+                self.assertEqual(self.calc.output_mode, "exact")
+        self.calc.calculate("7->x")
+        with self.assertRaises(CalcError):
+            self.calc.calculate("1/0->x", approximate=True)
+        self.assertEqual(self.calc.variables["x"].value, 7)
+        self.assertEqual(self.calc.answer.value, 7)
+        self.assertEqual(self.calc.output_mode, "exact")
+        self.assertTrue(self.calc.history[-1].is_error)
+
     def test_approximate_output_supports_arbitrary_precision(self):
         self.calc.set_output_mode("approximate")
         self.calc.set_precision(120)

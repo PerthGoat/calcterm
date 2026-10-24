@@ -248,6 +248,40 @@ class ConsoleTests(unittest.TestCase):
         self.assertFalse(self.app.input_selected)
         self.assertEqual(self.app.calculator.precision, 12)
 
+    def test_shift_enter_forces_approximate_output_without_changing_the_mode(self):
+        for mode in ("exact", "approximate"):
+            with self.subTest(mode=mode):
+                self.app.calculator.set_output_mode(mode)
+                self.app.calculator.set_precision(6)
+                self.app.clear_input()
+                self.type_keys("1/3")
+                self.app.handle_key("SHIFT_ENTER")
+                self.assertEqual(self.app.calculator.history[-1].result, "0.333333")
+                self.assertEqual(self.app.calculator.history[-1].source, "1/3")
+                self.assertEqual(str(self.app.calculator.answer.value), "1/3")
+                self.assertEqual(self.app.calculator.output_mode, mode)
+                self.assertEqual(self.highlighted_text(), "1/3")
+                self.app.handle_key("ENTER")
+                self.assertEqual(self.app.calculator.history[-1].result,
+                                 "1/3" if mode == "exact" else "0.333333")
+
+    def test_shift_enter_result_is_persisted_and_errors_do_not_change_mode(self):
+        self.app.calculator.set_precision(6)
+        self.type_keys("1/3")
+        self.app.handle_key("SHIFT_ENTER")
+        restored = ConsoleApp(config_path=self.config_path)
+        self.assertEqual(restored.calculator.history[-1].result, "0.333333")
+        self.assertEqual(restored.calculator.output_mode, "exact")
+        self.type_keys("1/0")
+        self.app.handle_key("SHIFT_ENTER")
+        self.assertTrue(self.app.calculator.history[-1].is_error)
+        self.assertEqual(self.app.calculator.output_mode, "exact")
+        self.assertEqual(self.highlighted_text(), "1/0")
+        self.type_keys(":precision 12")
+        self.app.handle_key("SHIFT_ENTER")
+        self.assertEqual(self.app.calculator.precision, 12)
+        self.assertEqual(self.app.text, "")
+
     def test_shift_arrows_extend_shrink_and_reverse_selection_from_an_anchor(self):
         self.type_keys("12345")
         self.app.handle_key("HOME")
@@ -1487,6 +1521,42 @@ class ConsoleTests(unittest.TestCase):
                     with patch("os.name", "nt"), patch.dict("sys.modules", {"msvcrt": keyboard}), \
                             patch("calc_term.windows_shift_pressed", return_value=shifted):
                         self.assertEqual(Terminal().read_key(), ("SHIFT_" if shifted else "") + arrow)
+
+    def test_windows_shift_enter_is_distinct_from_enter(self):
+        for shifted in (False, True):
+            with self.subTest(shifted=shifted):
+                keyboard = Mock()
+                keyboard.getwch.return_value = "\r"
+                with patch("os.name", "nt"), patch.dict("sys.modules", {"msvcrt": keyboard}), \
+                        patch("calc_term.windows_shift_pressed", return_value=shifted):
+                    self.assertEqual(Terminal().read_key(), "SHIFT_ENTER" if shifted else "ENTER")
+
+    def test_posix_modified_enter_and_control_keys(self):
+        for sequence, expected in ((b"\x1b[13;2u", "SHIFT_ENTER"), (b"\x1b[27;2;13~", "SHIFT_ENTER"),
+                                   (b"\x1b[13;1u", "ENTER"), (b"\x1b[13;5u", "ENTER"),
+                                   (b"\x1b[13;6u", "SHIFT_ENTER"), (b"\x1b[99;5u", "CTRL_C"),
+                                   (b"\x1b[27;5;117~", "CTRL_U"), (b"\x1b[27;2;65~", "A")):
+            with self.subTest(sequence=sequence), patch("os.name", "posix"), patch("sys.stdin") as stdin, \
+                    patch("select.select", return_value=([0], [], [])), \
+                    patch("os.read", side_effect=[bytes([byte]) for byte in sequence]):
+                stdin.fileno.return_value = 0
+                self.assertEqual(Terminal().read_key(), expected)
+
+    def test_posix_modified_key_reporting_is_reset_when_terminal_exits_after_error(self):
+        termios = Mock()
+        termios.tcgetattr.return_value = ["saved mode"]
+        termios.TCSADRAIN = 1
+        tty = Mock()
+        with patch("os.name", "posix"), patch.dict("sys.modules", {"termios": termios, "tty": tty}), \
+                patch("sys.stdin") as stdin, patch("sys.stdout", new_callable=io.StringIO) as output:
+            stdin.fileno.return_value = 0
+            with self.assertRaisesRegex(RuntimeError, "test error"):
+                with Terminal():
+                    self.assertIn("\x1b[>4;2m", output.getvalue())
+                    raise RuntimeError("test error")
+            text = output.getvalue()
+            self.assertLess(text.index("\x1b[>4m"), text.index("\x1b[?1049l"))
+            termios.tcsetattr.assert_called_once_with(0, 1, ["saved mode"])
 
     def test_posix_shift_arrow_sequences_select_input(self):
         for sequence, selection in ((b"\x1b[1;2D", (2, 3)), (b"\x1b[1;2C", (0, 1))):
