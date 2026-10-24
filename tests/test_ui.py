@@ -248,6 +248,115 @@ class ConsoleTests(unittest.TestCase):
         self.assertFalse(self.app.input_selected)
         self.assertEqual(self.app.calculator.precision, 12)
 
+    def test_shift_arrows_extend_shrink_and_reverse_selection_from_an_anchor(self):
+        self.type_keys("12345")
+        self.app.handle_key("HOME")
+        self.app.handle_key("RIGHT")
+        self.app.handle_key("RIGHT")
+        self.app.handle_key("SHIFT_RIGHT")
+        self.app.handle_key("SHIFT_RIGHT")
+        self.assertEqual(self.app.input_selection, (2, 4))
+        self.assertEqual(self.highlighted_text(), "34")
+        self.app.handle_key("SHIFT_LEFT")
+        self.assertEqual(self.highlighted_text(), "3")
+        self.app.handle_key("SHIFT_LEFT")
+        self.assertFalse(self.app.input_selected)
+        self.assertEqual(self.app.cursor, 2)
+        self.app.handle_key("SHIFT_LEFT")
+        self.assertEqual(self.app.input_selection, (1, 2))
+        self.assertEqual(self.highlighted_text(), "2")
+        self.app.handle_key("SHIFT_LEFT")
+        self.app.handle_key("SHIFT_LEFT")
+        self.assertEqual(self.app.input_selection, (0, 2))
+        self.assertEqual(self.app.cursor, 0)
+
+    def test_deleting_or_typing_replaces_only_the_selected_part(self):
+        for key in ("DELETE", "BACKSPACE", "7"):
+            with self.subTest(key=key):
+                self.app.clear_input()
+                self.type_keys("12+34+56")
+                self.app.handle_key("HOME")
+                for _ in range(3):
+                    self.app.handle_key("RIGHT")
+                self.app.handle_key("SHIFT_RIGHT")
+                self.app.handle_key("SHIFT_RIGHT")
+                self.app.handle_key(key)
+                expected = "12+7+56" if key == "7" else "12++56"
+                self.assertEqual(self.app.text, expected)
+                self.assertEqual(self.app.cursor, 4 if key == "7" else 3)
+                self.assertFalse(self.app.input_selected)
+
+    def test_plain_arrows_collapse_partial_selection_to_its_edges(self):
+        for key, expected in (("LEFT", 2), ("RIGHT", 4)):
+            with self.subTest(key=key):
+                self.app.clear_input()
+                self.type_keys("12345")
+                self.app.handle_key("HOME")
+                for _ in range(4):
+                    self.app.handle_key("RIGHT")
+                self.app.handle_key("SHIFT_LEFT")
+                self.app.handle_key("SHIFT_LEFT")
+                self.assertEqual(self.app.input_selection, (2, 4))
+                self.app.handle_key(key)
+                self.assertEqual(self.app.cursor, expected)
+                self.assertFalse(self.app.input_selected)
+                self.assertEqual(self.app.text, "12345")
+
+    def test_shift_selection_refines_the_full_selection_after_submission(self):
+        self.type_keys("5+3")
+        self.app.handle_key("ENTER")
+        self.app.handle_key("SHIFT_LEFT")
+        self.assertEqual(self.app.input_selection, (0, 2))
+        self.assertEqual(self.highlighted_text(), "5+")
+        self.app.handle_key("BACKSPACE")
+        self.assertEqual((self.app.text, self.app.cursor), ("3", 0))
+        self.assertEqual(self.app.calculator.history[-1].source, "5+3")
+
+    def test_partial_selection_survives_catalog_cancel_and_is_replaced_on_insertion(self):
+        self.type_keys("2+123+4")
+        self.app.handle_key("HOME")
+        self.app.handle_key("RIGHT")
+        self.app.handle_key("RIGHT")
+        for _ in range(3):
+            self.app.handle_key("SHIFT_RIGHT")
+        self.app.command(":catalog")
+        self.app.handle_key("ESC")
+        self.assertEqual(self.app.input_selection, (2, 5))
+        self.app.command(":catalog")
+        self.type_keys("epsilon (ε)")
+        self.app.handle_key("ENTER")
+        self.assertEqual(self.app.text, "2+ε+4")
+        self.assertFalse(self.app.input_selected)
+
+    def test_partial_selection_renders_across_scrolling_and_wide_characters(self):
+        for source in ("a" * 100, "数" * 100):
+            with self.subTest(source=source):
+                self.app.clear_input()
+                self.type_keys(source)
+                self.app.handle_key("HOME")
+                for _ in range(55):
+                    self.app.handle_key("RIGHT")
+                for _ in range(10):
+                    self.app.handle_key("SHIFT_LEFT")
+                self.assertEqual(self.app.input_selection, (45, 55))
+                self.assertEqual(self.highlighted_text(width=40, height=12), source[45:55])
+                self.app.handle_key("BACKSPACE")
+                self.assertEqual(self.app.text, source[:45] + source[55:])
+                self.assertEqual(self.app.cursor, 45)
+
+    def test_shift_arrows_handle_empty_input_and_both_boundaries(self):
+        self.app.handle_key("SHIFT_LEFT")
+        self.app.handle_key("SHIFT_RIGHT")
+        self.assertFalse(self.app.input_selected)
+        self.type_keys("abc")
+        for _ in range(6):
+            self.app.handle_key("SHIFT_LEFT")
+        self.assertEqual(self.app.input_selection, (0, 3))
+        for _ in range(6):
+            self.app.handle_key("SHIFT_RIGHT")
+        self.assertFalse(self.app.input_selected)
+        self.assertEqual(self.app.cursor, 3)
+
     def test_f7_equation_editor_and_calculator_call(self):
         self.type_keys("y1(3)")
         self.app.handle_key("F7")
@@ -1368,6 +1477,30 @@ class ConsoleTests(unittest.TestCase):
                 keyboard.getwch.side_effect = code
                 with patch("os.name", "nt"), patch.dict("sys.modules", {"msvcrt": keyboard}):
                     self.assertEqual(Terminal().read_key(), expected)
+
+    def test_windows_arrows_distinguish_shift_selection_from_plain_movement(self):
+        for code, arrow in (("K", "LEFT"), ("M", "RIGHT")):
+            for shifted in (False, True):
+                with self.subTest(arrow=arrow, shifted=shifted):
+                    keyboard = Mock()
+                    keyboard.getwch.side_effect = ["\xe0", code]
+                    with patch("os.name", "nt"), patch.dict("sys.modules", {"msvcrt": keyboard}), \
+                            patch("calc_term.windows_shift_pressed", return_value=shifted):
+                        self.assertEqual(Terminal().read_key(), ("SHIFT_" if shifted else "") + arrow)
+
+    def test_posix_shift_arrow_sequences_select_input(self):
+        for sequence, selection in ((b"\x1b[1;2D", (2, 3)), (b"\x1b[1;2C", (0, 1))):
+            with self.subTest(sequence=sequence):
+                self.app.clear_input()
+                self.type_keys("123")
+                if sequence.endswith(b"C"):
+                    self.app.handle_key("HOME")
+                with patch("os.name", "posix"), patch("sys.stdin") as stdin, \
+                        patch("select.select", return_value=([0], [], [])), \
+                        patch("os.read", side_effect=[bytes([byte]) for byte in sequence]):
+                    stdin.fileno.return_value = 0
+                    self.app.handle_key(Terminal().read_key())
+                self.assertEqual(self.app.input_selection, selection)
 
     def test_posix_equation_and_table_shortcuts(self):
         for code, expected in ((b"\x1b[18~", "F7"), (b"\x1b[19~", "F8"),

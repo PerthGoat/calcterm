@@ -38,6 +38,7 @@ or Ctrl+D. The interactive app restores the terminal when it exits.
 | Enter with history selected | Insert the highlighted part at the input cursor |
 | Enter in input | Calculate and select the expression, or execute a `:` command |
 | Left / Right | Move the input cursor; open/return from submenus or switch top menus |
+| Shift+Left / Shift+Right | Extend or shrink the input selection |
 | Home / End | Move to the input ends or the first/last dropdown item |
 | Backspace / Delete | Edit the input |
 | PageUp / PageDown | Browse history or page through a dropdown |
@@ -53,6 +54,12 @@ can edit normally. Home/End also clears the selection and moves to the correspon
 end. Enter again recalculates the expression. History, menu, and Catalog insertions
 replace selected input. Failed calculations use the same selection behavior; `:` commands
 continue to clear the input after successful execution.
+
+Hold **Shift** while pressing Left or Right to select part of the input. Reversing
+direction shrinks the selection; continuing past its starting point selects in the
+opposite direction. Typing, history recall, and menu/Catalog insertions replace only
+the selected portion, while Backspace/Delete removes it. Plain Left/Right collapses
+a partial selection to its left/right edge.
 
 In a dropdown, use Up/Down and Enter to choose an item. Type to filter its labels;
 Backspace edits the filter. In F2, choose a unit category with Enter or Right, then

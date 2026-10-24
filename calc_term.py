@@ -1100,6 +1100,7 @@ HELP_LINES = [
     "Up/Down: select history results/expressions; Enter: insert the highlighted part.",
     "After calculation: input stays selected; type to replace; Backspace/Delete clears.",
     "Left/Right on selected input: move to the beginning/end for editing.",
+    "Shift+Left/Right: select part of the input; type or Backspace/Delete replaces it.",
     "Left/Right: move cursor; Home/End: line ends; Tab: input/history focus.",
     "Esc: close menu or return to input; Ctrl+C / Ctrl+D: quit; Ctrl+L: redraw.",
     "F1-F6: menus; Up/Down or PageUp/PageDown: select; Enter: choose.",
@@ -1154,6 +1155,7 @@ class ConsoleApp:
         self.text = ""
         self.cursor = 0
         self._selected_input: str | None = None
+        self._selection_anchor: int | None = None
         self.history_index = None
         self.history_rows = 18  # Default 24-row terminal, minus menus and footer.
         self.history_start = 0
@@ -1476,18 +1478,42 @@ class ConsoleApp:
         self.save_problems()
 
     @property
-    def input_selected(self):
+    def input_selection(self) -> tuple[int, int] | None:
         # Keep selection tied to its text if a caller replaces the input buffer.
-        return bool(self.text) and self._selected_input == self.text
+        anchor = self._selection_anchor
+        if (self._selected_input != self.text or anchor is None or anchor == self.cursor
+                or not 0 <= anchor <= len(self.text) or not 0 <= self.cursor <= len(self.text)):
+            return None
+        return min(anchor, self.cursor), max(anchor, self.cursor)
+
+    @property
+    def input_selected(self):
+        return self.input_selection is not None
+
+    def clear_input_selection(self):
+        self._selected_input, self._selection_anchor = None, None
+
+    def select_all_input(self):
+        self.cursor = len(self.text)
+        self._selected_input, self._selection_anchor = self.text, 0
+
+    def delete_input_selection(self):
+        selection = self.input_selection
+        if selection is None:
+            return False
+        first, last = selection
+        self.text = self.text[:first] + self.text[last:]
+        self.cursor, self.history_index = first, None
+        self.clear_input_selection()
+        return True
 
     def clear_input(self):
         self.text, self.cursor, self.history_index = "", 0, None
-        self._selected_input = None
+        self.clear_input_selection()
 
     def insert(self, text):
-        if self.input_selected:
-            self.clear_input()
-        self._selected_input = None
+        self.delete_input_selection()
+        self.clear_input_selection()
         self.text = self.text[:self.cursor] + text + self.text[self.cursor:]
         self.cursor += len(text)
         self.history_index = None
@@ -1633,18 +1659,16 @@ class ConsoleApp:
                 self.calculator.evaluate(self.text)
                 self.message = self.calculator.history[-1].line
                 self.save_history()
-                self.cursor = len(self.text)
-                self._selected_input = self.text
+                self.select_all_input()
             self.history_index = None
         except (CalcError, OSError) as exc:
             # Keep failed input in the editor for correction and persist any error entry.
             self.message = "Error: " + str(exc)
             self.history_index = None
             if self.text.lstrip().startswith(":"):
-                self._selected_input = None
+                self.clear_input_selection()
             else:
-                self.cursor = len(self.text)
-                self._selected_input = self.text
+                self.select_all_input()
             self.save_history()
 
     def handle_key(self, key):
@@ -1775,31 +1799,40 @@ class ConsoleApp:
                 self.message = "Inserted history " + part + " at the cursor."
             else:
                 self.submit()
+        elif key in ("SHIFT_LEFT", "SHIFT_RIGHT"):
+            self.history_index = None
+            if self._selected_input != self.text or self._selection_anchor is None:
+                self._selected_input, self._selection_anchor = self.text, self.cursor
+            self.cursor = max(0, min(len(self.text), self.cursor + (-1 if key == "SHIFT_LEFT" else 1)))
         elif key == "LEFT":
             self.history_index = None
-            self.cursor = 0 if self.input_selected else max(0, self.cursor - 1)
-            self._selected_input = None
+            selection = self.input_selection
+            self.cursor = selection[0] if selection is not None else max(0, self.cursor - 1)
+            self.clear_input_selection()
         elif key == "RIGHT":
             self.history_index = None
-            self.cursor = len(self.text) if self.input_selected else min(len(self.text), self.cursor + 1)
-            self._selected_input = None
+            selection = self.input_selection
+            self.cursor = selection[1] if selection is not None else min(len(self.text), self.cursor + 1)
+            self.clear_input_selection()
         elif key == "HOME":
             self.history_index = None
             self.cursor = 0
-            self._selected_input = None
+            self.clear_input_selection()
         elif key == "END":
             self.history_index = None
             self.cursor = len(self.text)
-            self._selected_input = None
+            self.clear_input_selection()
         elif key in ("BACKSPACE", "DELETE") and self.input_selected:
-            self.clear_input()
+            self.delete_input_selection()
         elif key == "BACKSPACE" and self.cursor:
             self.text = self.text[:self.cursor - 1] + self.text[self.cursor:]
             self.cursor -= 1
             self.history_index = None
+            self.clear_input_selection()
         elif key == "DELETE":
             self.text = self.text[:self.cursor] + self.text[self.cursor + 1:]
             self.history_index = None
+            self.clear_input_selection()
         elif key == "CTRL_U":
             self.clear_input()
         elif len(key) == 1 and key.isprintable():
@@ -2311,14 +2344,28 @@ class ConsoleApp:
         lines += ["-" * width]
         # Keep the cursor visible, including on very long arbitrary-precision inputs.
         available = width - 3
-        start_text = max(0, self.cursor - available + 1)
-        while display_width(self.text[start_text:self.cursor]) >= available:
+        input_selection = self.input_selection
+        focus = self.cursor
+        if input_selection is not None and self.cursor == input_selection[0]:
+            # Show selected text to the right of a selection moving left, too.
+            cells = 0
+            for char in self.text[self.cursor:input_selection[1]]:
+                cells += display_width(char)
+                if cells >= available:
+                    break
+                focus += 1
+        start_text = min(self.cursor, max(0, focus - available + 1))
+        while display_width(self.text[start_text:focus]) >= available:
             start_text += 1
         input_row = len(lines)
         lines.append("> " + self.text[start_text:start_text + available])
         cursor = (input_row + 1, 3 + display_width(self.text[start_text:self.cursor]))
-        if self.input_selected and index is None:
-            selected[input_row] = (2, len(lines[input_row]))
+        if input_selection is not None and index is None:
+            first, last = input_selection
+            first = max(first, start_text)
+            last = min(last, start_text + len(lines[input_row]) - 2)
+            if first < last:
+                selected[input_row] = (2 + first - start_text, 2 + last - start_text)
             cursor = None
         c = self.calculator
         selection = ("selected " + self.history_part if index is not None else
@@ -2431,6 +2478,7 @@ WINDOWS_KEYS = {"H": "UP", "P": "DOWN", "K": "LEFT", "M": "RIGHT", "G": "HOME", 
                 "I": "PAGEUP", "Q": "PAGEDOWN", "S": "DELETE", ";": "F1", "<": "F2", "=": "F3",
                 ">": "F4", "?": "F5", "@": "F6", "A": "F7", "B": "F8", "C": "F9"}
 ANSI_KEYS = {"\x1b[A": "UP", "\x1b[B": "DOWN", "\x1b[C": "RIGHT", "\x1b[D": "LEFT",
+             "\x1b[1;2D": "SHIFT_LEFT", "\x1b[1;2C": "SHIFT_RIGHT",
              "\x1b[H": "HOME", "\x1b[F": "END", "\x1b[1~": "HOME", "\x1b[4~": "END",
              "\x1b[7~": "HOME", "\x1b[8~": "END", "\x1b[3~": "DELETE", "\x1b[5~": "PAGEUP",
              "\x1b[6~": "PAGEDOWN", "\x1bOP": "F1", "\x1bOQ": "F2", "\x1bOR": "F3",
@@ -2440,6 +2488,15 @@ ANSI_KEYS = {"\x1b[A": "UP", "\x1b[B": "DOWN", "\x1b[C": "RIGHT", "\x1b[D": "LEF
 CONTROL_KEYS = {"\r": "ENTER", "\n": "ENTER", "\x1b": "ESC", "\t": "TAB", "\x08": "BACKSPACE",
                 "\x7f": "BACKSPACE", "\x03": "CTRL_C", "\x04": "CTRL_D", "\x15": "CTRL_U", "\x0c": "CTRL_L",
                 "\x14": "CTRL_T"}
+
+
+def windows_shift_pressed():
+    # msvcrt uses the same arrow scan codes with and without Shift.
+    import ctypes
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
+    user32.GetAsyncKeyState.restype = ctypes.c_short
+    return bool(user32.GetAsyncKeyState(0x10) & 0x8000)
 
 
 class Terminal:
@@ -2505,7 +2562,10 @@ class Terminal:
             char = msvcrt.getwch()
             if char in ("\x00", "\xe0"):
                 # Windows extended keys arrive as a prefix followed by a key code.
-                return WINDOWS_KEYS.get(msvcrt.getwch(), "UNKNOWN")
+                key = WINDOWS_KEYS.get(msvcrt.getwch(), "UNKNOWN")
+                if key in ("LEFT", "RIGHT") and windows_shift_pressed():
+                    return "SHIFT_" + key
+                return key
             if 0xd800 <= ord(char) <= 0xdbff:
                 # Join UTF-16 surrogate pairs into one Unicode character.
                 following = msvcrt.getwch()
