@@ -76,13 +76,41 @@ remain selectable with Up/Down. Composite recalled
 results are enclosed in parentheses to preserve arithmetic precedence.
 
 History saves automatically after each calculation, including errors, and restores on startup,
-including in `--plain` and `--eval` modes. It is stored separately from settings in
-`calc_term_config.history.json` beside the script; `--config my_settings.json` uses
-`my_settings.history.json` beside that settings file. No `:save` is needed for history.
-`:clear` also clears saved history. The history limit still follows the terminal height,
+including in `--plain` and `--eval` modes. Each Problem stores its own history in the
+Problems file described below. Existing history files are imported into Default;
+`calc_term_config.history.json` is also maintained as a copy of Default's history.
+No `:save` is needed for history. `:clear` clears the current Problem's saved history.
+The history limit still follows the terminal height,
 with a minimum of 30. Restoring history displays the recorded expressions and results
 without evaluating them again. Variables last for the current session; `:save` saves
-settings, equations, units, and menus.
+general settings, custom units, and menus.
+
+## Problems
+
+**F5 Options → Problems** contains:
+
+- **New Problem**: enter a name and press Enter to create an empty Problem.
+- **Open Problem**: select a saved Problem and press Enter to open it. Type to filter names.
+- **Delete Problem**: select a Problem, then confirm in the popup. **Cancel** is selected
+  by default; use Left/Right or Tab to select **Delete**, then press Enter. Esc cancels.
+
+Each Problem remembers its history, equations, equation checkmarks, and table start/step
+settings automatically. The current Problem saves before you switch, and the app reopens
+the last active Problem on startup. The calculator shows the current name above history.
+Names can contain spaces and Unicode, up to 80 printable characters; duplicates ignore case.
+
+Existing work belongs to **Default**, which remains available and cannot be deleted.
+Deleting the active named Problem returns to Default. General preferences, menus, and
+custom units are shared between Problems. Assigned variables and `ans` are session values;
+opening a Problem starts them fresh while restoring its recorded history without replaying it.
+
+Problems are stored separately from general settings in `calc_term_config.problems.json`
+beside the script. `--config my_settings.json` uses `my_settings.problems.json` instead.
+Writes replace the file atomically; load/write errors are displayed and damaged files are
+preserved. Back up the Problems file to keep all your saved work.
+
+In plain mode, use `:problem new NAME` and `:problem open NAME`. The interactive
+`:problem delete [NAME]` command opens the confirmation popup.
 
 ## Equations
 
@@ -115,10 +143,12 @@ Other variables and `ans` also use their values at call time. Undefined slots an
 circular references report errors when called. The names `y1` through `y99` are
 reserved for equation calls and cannot be assigned ordinary variable values.
 
-Use **`:save`** after returning to the calculator (or Save configuration in F5) to
-keep equations across restarts. They are stored in the settings JSON as an `equations`
-object, for example `"equations": {"y1": "4x", "y99": "x^2+1"}`. Saved equations
-can also be called in `--plain` and `--eval` modes.
+Equations save automatically when you save a row or leave the editor; **`:save` is
+not required**. A valid formula still being edited also saves when the app exits
+normally. Invalid pending edits leave the last valid formula intact, and Esc still
+discards the current edit. Definitions from older settings files are imported into
+Default when no Problems file exists. Saved equations can also be called in `--plain`
+and `--eval` modes.
 
 ## Table
 
@@ -146,10 +176,8 @@ that fails at a particular x displays `Error` in that cell while the other cells
 remain available. Table calculations preserve calculator variables, `ans`, history,
 and pending input. Unchecked equations can still be called normally in calculations.
 
-Use **`:save`** in the calculator to keep table settings and equation checkmarks across
-restarts. Settings store `"table": {"start": "0", "step": "1"}` and an
-`"unchecked_equations"` list, such as `["y2"]`. Older settings default to checking all
-defined equations.
+Table settings and equation checkmarks save automatically in the current Problem.
+Older settings default to checking all defined equations.
 
 ## Math
 

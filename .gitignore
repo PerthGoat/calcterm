@@ -5,3 +5,5 @@ calc_term_config.json
 calc_term_config.json.tmp
 *.history.json
 *.history.json.tmp
+*.problems.json
+*.problems.json.tmp

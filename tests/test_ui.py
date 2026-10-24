@@ -402,8 +402,9 @@ class ConsoleTests(unittest.TestCase):
         restored.handle_key("F8")
         lines, _, _ = restored.frame()
         self.assertEqual([cell.strip() for cell in lines[4].split("|")], ["3", "13"])
-        self.config_path.write_text(json.dumps({"equations": {"y1": "4x"}}), encoding="utf-8")
-        restored = ConsoleApp(config_path=self.config_path)
+        legacy_config = self.config_path.with_name("legacy.json")
+        legacy_config.write_text(json.dumps({"equations": {"y1": "4x"}}), encoding="utf-8")
+        restored = ConsoleApp(config_path=legacy_config)
         self.assertEqual(restored.table_equation_names(), ["y1"])
         self.assertEqual((restored.table_start, restored.table_step), ("0", "1"))
 

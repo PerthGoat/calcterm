@@ -601,7 +601,7 @@ class Parser:
             elif token in RESERVED:
                 left = Quantity(RESERVED[token])
             elif token == "ans":
-                left = self.calculator.answer
+                left = Quantity(sp.Symbol("ans")) if self.validating_equation else self.calculator.answer
             else:
                 # Unassigned names remain symbolic rather than being treated as errors.
                 left = self.local_variables.get(token,
@@ -982,6 +982,11 @@ def filter_menu_items(items, query):
     return result
 
 
+def problem_menu():
+    return {"label": "Problems", "items": [command_item("New Problem", ":problem new"),
+            command_item("Open Problem", ":problem open"), command_item("Delete Problem", ":problem delete")]}
+
+
 def default_menus(registry):
     # Build F1-F6 from the current registry, including any loaded custom units.
     units = sorted((u for u in registry.units.values() if not u.constant), key=lambda u: (u.category, u.name))
@@ -996,6 +1001,7 @@ def default_menus(registry):
         {"label": "Symbols", "items": [insert_item(s + " " + label, s) for s, label in SYMBOLS]},
         {"label": "Options", "items": [command_item("Radian mode", ":mode radian"), command_item("Degree mode", ":mode degree"),
          *output_options(),
+         problem_menu(),
          command_item("Select result first", ":recall result"), command_item("Select expression first", ":recall expression"),
          insert_item("Set precision", ":precision 100"), insert_item("Rename a menu", ":menu 1 Math"),
          insert_item("Add menu item", ":menuadd 1 Square | ^2"), command_item("Save configuration", ":save"),
@@ -1062,7 +1068,8 @@ HELP_LINES = [
     ":menu 1 Favorites    :menuadd 1 Square | ^2    :menuclear 1",
     ":recall result|expression    :unset x    :vars    :clear    :save    :quit",
     "Decimals/fractions stay exact; approx(pi,100) requests a decimal approximation.",
-    "Settings, equations, custom units, and six menus are saved using :save.",
+    "Equations and Problems save automatically; F5 > Problems: new/open/delete.",
+    "Settings, custom units, and six menus are saved using :save.",
 ]
 
 
@@ -1073,6 +1080,17 @@ class ConsoleApp:
         self.calculator = calculator or Calculator()
         self.config_path = Path(config_path) if config_path else Path(__file__).with_name("calc_term_config.json")
         self.history_path = self.config_path.with_suffix(".history.json")
+        self.problems_path = self.config_path.with_suffix(".problems.json")
+        self.problem_name = "Default"
+        self.problems: dict[str, dict] = {}
+        self._saved_problems = ""
+        self._problems_load_failed = False
+        self.problem_dialog: str | None = None
+        self.problem_dialog_text = ""
+        self.problem_dialog_cursor = 0
+        self.problem_dialog_index = 0
+        self.problem_delete_name = ""
+        self.problem_delete_confirm = False
         self._saved_history: tuple[HistoryEntry, ...] = ()
         self.menus = default_menus(self.calculator.registry)
         # Editing and history selection are separate: browsing must not move the cursor.
@@ -1106,23 +1124,181 @@ class ConsoleApp:
         self.running = True
         self._load_config()
         self._load_history()
+        self._load_problems()
+
+    @staticmethod
+    def history_entries(data) -> list[HistoryEntry]:
+        if not isinstance(data, list):
+            raise CalcError("History must be a list of calculations.")
+        entries = []
+        for item in data:
+            if not isinstance(item, dict) or any(
+                not isinstance(item.get(key), str) or not item[key].strip()
+                for key in ("source", "result")
+            ):
+                raise CalcError("Each history entry needs source and result strings.")
+            if not isinstance(item.get("is_error", False), bool):
+                raise CalcError("History is_error must be true or false.")
+            entries.append(HistoryEntry(item["source"], item["result"], item.get("is_error", False)))
+        return entries
+
+    def problem_snapshot(self):
+        return {"equations": dict(self.calculator.equations),
+                "unchecked_equations": sorted(self.calculator.unchecked_equations, key=EQUATION_NAMES.index),
+                "table": {"start": self.table_start, "step": self.table_step},
+                "history": [{"source": entry.source, "result": entry.result,
+                             **({"is_error": True} if entry.is_error else {})}
+                            for entry in self.calculator.history]}
+
+    @staticmethod
+    def validate_problem_name(name):
+        if not isinstance(name, str) or not name.strip() or len(name.strip()) > 80 or not name.isprintable():
+            raise CalcError("Use a Problem name of 1 to 80 printable characters.")
+        return name.strip()
+
+    def prepare_problem(self, data):
+        if not isinstance(data, dict):
+            raise CalcError("Each Problem must be an object.")
+        # Restore definitions, not old calculations or session variable assignments.
+        calculator = Calculator(self.calculator.mode, self.calculator.precision, self.calculator.output_mode)
+        calculator.registry = self.calculator.registry
+        calculator.unit_definitions = dict(self.calculator.unit_definitions)
+        equations = data.get("equations", {})
+        if not isinstance(equations, dict):
+            raise CalcError("Problem equations must map names to expressions.")
+        for name, expression in equations.items():
+            calculator.define_equation(name, expression)
+        unchecked = data.get("unchecked_equations", [])
+        if not isinstance(unchecked, list) or any(
+            not isinstance(name, str) or name not in calculator.equations for name in unchecked
+        ):
+            raise CalcError("Problem unchecked_equations must list defined equations.")
+        calculator.unchecked_equations = set(unchecked)
+        entries = self.history_entries(data.get("history", []))
+        calculator.history = deque(entries, maxlen=max(30, len(entries)))
+        table = data.get("table", {})
+        if not isinstance(table, dict):
+            raise CalcError("Problem table must be an object.")
+        start, step = self.validate_table_settings(calculator, table.get("start", "0"), table.get("step", "1"))
+        return calculator, start, step
+
+    @staticmethod
+    def problems_document(problems, active):
+        return json.dumps({"version": 1, "active": active, "problems": problems},
+                          indent=2, ensure_ascii=False) + "\n"
+
+    def _load_problems(self):
+        self.problems = {"Default": self.problem_snapshot()}
+        self._saved_problems = self.problems_document(self.problems, self.problem_name)
+        try:
+            data = json.loads(self.problems_path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict) or data.get("version") != 1:
+                raise CalcError("Unsupported Problems file format.")
+            problems, active = data.get("problems"), data.get("active")
+            if not isinstance(problems, dict) or "Default" not in problems:
+                raise CalcError("Problems must include the Default Problem.")
+            if not isinstance(active, str) or active not in problems:
+                raise CalcError("The active Problem does not exist.")
+            names = set()
+            prepared = {}
+            for name, state in problems.items():
+                if self.validate_problem_name(name) != name or name.casefold() in names:
+                    raise CalcError("Problem names must be unique and have no surrounding spaces.")
+                names.add(name.casefold())
+                prepared[name] = self.prepare_problem(state)
+            self.problems = problems
+            self._apply_problem(active, prepared[active])
+            self._saved_problems = self.problems_document(problems, active)
+        except FileNotFoundError:
+            pass
+        except (OSError, ValueError, TypeError) as exc:
+            self._problems_load_failed = True
+            self.message += f" | Problems load error: {exc} (original file preserved)"
+
+    def _write_problems(self, problems, active):
+        if self._problems_load_failed:
+            raise CalcError("Cannot save Problems while their file has a load error; original file preserved.")
+        document = self.problems_document(problems, active)
+        if document != self._saved_problems:
+            temporary = self.problems_path.with_name(self.problems_path.name + ".tmp")
+            try:
+                temporary.write_text(document, encoding="utf-8")
+                temporary.replace(self.problems_path)
+            except OSError as exc:
+                raise CalcError(f"Cannot save Problems: {exc}") from None
+        self.problems = problems
+        self._saved_problems = document
+
+    def save_problems(self):
+        try:
+            self._write_problems({**self.problems, self.problem_name: self.problem_snapshot()}, self.problem_name)
+        except CalcError as exc:
+            self.message = self.message.split(" | Problem save error:", 1)[0] + f" | Problem save error: {exc}"
+            return False
+        self.message = self.message.split(" | Problem save error:", 1)[0]
+        return True
+
+    def _apply_problem(self, name, prepared):
+        self.calculator, self.table_start, self.table_step = prepared
+        self.problem_name = name
+        self._saved_history = tuple(self.calculator.history)
+        self.text, self.cursor = "", 0
+        self.history_index, self.history_start = None, 0
+        self.equation_open, self.table_open, self.help_open = False, False, False
+        self.equation_index, self.table_row, self.table_column = 0, 0, 0
+        self.table_edit_field = None
+        self.open_menu = None
+        self.menu_stack.clear()
+
+    def new_problem(self, name):
+        name = self.validate_problem_name(name)
+        if any(existing.casefold() == name.casefold() for existing in self.problems):
+            raise CalcError("A Problem with that name already exists.")
+        prepared = self.prepare_problem({})
+        if not self.save_history():
+            raise CalcError("Current Problem could not be saved; staying in it.")
+        state = {"equations": {}, "history": [], "unchecked_equations": [], "table": {"start": "0", "step": "1"}}
+        self._write_problems({**self.problems, name: state}, name)
+        self._apply_problem(name, prepared)
+        self.message = "Created Problem: " + name
+
+    def open_problem(self, name):
+        if name not in self.problems:
+            raise CalcError("No Problem named " + name)
+        if not self.save_history():
+            raise CalcError("Current Problem could not be saved; staying in it.")
+        prepared = self.prepare_problem(self.problems[name])
+        self._write_problems(self.problems, name)
+        self._apply_problem(name, prepared)
+        self.message = "Opened Problem: " + name
+
+    def _delete_confirmed_problem(self):
+        name = self.problem_delete_name
+        if name == "Default" or name not in self.problems:
+            raise CalcError("Choose a saved Problem to delete; Default is kept.")
+        if not self.save_history():
+            raise CalcError("Current Problem could not be saved; deletion canceled.")
+        active = "Default" if name == self.problem_name else self.problem_name
+        prepared = self.prepare_problem(self.problems[active]) if name == self.problem_name else None
+        remaining = {key: state for key, state in self.problems.items() if key != name}
+        self._write_problems(remaining, active)
+        if prepared is not None:
+            self._apply_problem(active, prepared)
+        self.message = "Deleted Problem: " + name
+
+    def save_session(self):
+        # A valid formula still being edited should survive a normal app exit.
+        if self.equation_open:
+            self.commit_equation()
+        if self.table_edit_field is not None:
+            self.commit_table_settings()
+        return self.save_history()
 
     def _load_history(self):
         # History is display-only data; restoring it does not recreate variables or ans.
         try:
             data = json.loads(self.history_path.read_text(encoding="utf-8"))
-            if not isinstance(data, list):
-                raise CalcError("History must be a list of calculations.")
-            entries = []
-            for item in data:
-                if not isinstance(item, dict) or any(
-                    not isinstance(item.get(key), str) or not item[key].strip()
-                    for key in ("source", "result")
-                ):
-                    raise CalcError("Each history entry needs source and result strings.")
-                if not isinstance(item.get("is_error", False), bool):
-                    raise CalcError("History is_error must be true or false.")
-                entries.append(HistoryEntry(item["source"], item["result"], item.get("is_error", False)))
+            entries = self.history_entries(data)
             # Keep all saved entries until the first frame applies the terminal's limit.
             self.calculator.history = deque(entries, maxlen=max(30, len(entries)))
             self._saved_history = tuple(entries)
@@ -1135,6 +1311,11 @@ class ConsoleApp:
         """Save changed history atomically; a write error must not undo a calculation."""
         entries = tuple(self.calculator.history)
         if not force and entries == self._saved_history:
+            return self.save_problems()
+        if self.problem_name != "Default":
+            if not self.save_problems():
+                return False
+            self._saved_history = entries
             return True
         temporary = self.history_path.with_name(self.history_path.name + ".tmp")
         try:
@@ -1147,7 +1328,7 @@ class ConsoleApp:
             return False
         self._saved_history = entries
         self.message = self.message.split(" | History save error:", 1)[0]
-        return True
+        return self.save_problems()
 
     def _load_config(self):
         # Prepare a separate calculator and menu tree, committing them only when valid.
@@ -1201,6 +1382,8 @@ class ConsoleApp:
                 for option in output_options():
                     if not any(item.get("command") == option["command"] for item in menus[4]["items"]):
                         menus[4]["items"].append(option)
+            if not any(item.get("label") == "Problems" and "items" in item for item in menus[4]["items"]):
+                menus[4]["items"].append(problem_menu())
             self.calculator = calculator
             self.history_insert = recall
             self.menus = menus
@@ -1211,7 +1394,7 @@ class ConsoleApp:
 
     def save_config(self):
         # Write beside the destination and replace it only after serialization succeeds.
-        # Settings and unit definitions are saved here; history has its own file.
+        # General settings stay separate from the automatically saved Problems file.
         data = {"mode": self.calculator.mode, "precision": self.calculator.precision,
                 "output_mode": self.calculator.output_mode,
                 "history_insert": self.history_insert, "units": self.calculator.unit_definitions,
@@ -1227,6 +1410,7 @@ class ConsoleApp:
         except OSError as exc:
             raise CalcError(f"Cannot save configuration: {exc}") from None
         self.message = "Saved configuration to " + str(self.config_path)
+        self.save_problems()
 
     def insert(self, text):
         self.text = self.text[:self.cursor] + text + self.text[self.cursor:]
@@ -1282,6 +1466,14 @@ class ConsoleApp:
             self.running = False
         elif name == ":help":
             self.help_open = True
+        elif name == ":problem":
+            action, _, problem_name = arg.partition(" ")
+            if action not in ("new", "open", "delete"):
+                raise CalcError("Use :problem new/open/delete [NAME].")
+            if problem_name and action in ("new", "open"):
+                (self.new_problem if action == "new" else self.open_problem)(problem_name)
+            else:
+                self.begin_problem_dialog(action, problem_name)
         elif name == ":mode":
             self.calculator.set_mode(arg)
             self.message = "Angle mode: " + self.calculator.mode + "; :save to keep settings."
@@ -1370,6 +1562,9 @@ class ConsoleApp:
         if key in ("CTRL_C", "CTRL_D"):
             self.running = False
             return
+        if self.problem_dialog is not None:
+            self.handle_problem_key(key)
+            return
         if key == "F8":
             if self.equation_open and not self.commit_equation():
                 return
@@ -1380,7 +1575,7 @@ class ConsoleApp:
             self.menu_stack.clear()
             self.help_open = False
             self.table_open = not self.table_open
-            self.message = "Tab: start/step | Arrows: scroll | F7: equations | F8/Esc: close | :save keeps settings"
+            self.message = "Tab: start/step | Arrows: scroll | F7: equations | F8/Esc: close | Settings save automatically"
             return
         if key == "F7":
             if self.table_edit_field is not None and not self.commit_table_settings():
@@ -1522,8 +1717,8 @@ class ConsoleApp:
         except CalcError as exc:
             self.message = "Error: " + str(exc)
             return False
-        self.message = f"{name}(x)=" + self.equation_text.strip() + " | :save to keep equations."
-        return True
+        self.message = f"{name}(x)=" + self.equation_text.strip() + " | Equations saved automatically."
+        return self.save_problems()
 
     def handle_equation_key(self, key):
         if key == "CTRL_T":
@@ -1535,12 +1730,13 @@ class ConsoleApp:
                         unchecked.remove(name)
                     else:
                         unchecked.add(name)
-                    self.message = f"{name}: {'unchecked' if name in unchecked else 'checked'} for F8 table | :save to keep"
+                    self.message = f"{name}: {'unchecked' if name in unchecked else 'checked'} for F8 table"
+                    self.save_problems()
                 else:
                     self.message = "Enter an equation before checking it for the table."
         elif key == "ESC":
             self.equation_open = False
-            self.message = "Equation editor closed; current edit canceled. Use :save to keep saved equations."
+            self.message = "Equation editor closed; current edit canceled. Saved equations are remembered automatically."
         elif key in ("UP", "DOWN", "PAGEUP", "PAGEDOWN", "ENTER", "TAB"):
             if self.commit_equation():
                 delta = {"UP": -1, "DOWN": 1, "PAGEUP": -self.history_rows,
@@ -1626,8 +1822,8 @@ class ConsoleApp:
         self.table_start, self.table_step = start, step
         self.table_row = 0
         self.table_edit_field = None
-        self.message = "Table settings applied | Tab: start/step | :save to keep settings"
-        return True
+        self.message = "Table settings saved automatically | Tab: start/step"
+        return self.save_problems()
 
     def table_equation_names(self) -> list[str]:
         return [name for name in EQUATION_NAMES if name in self.calculator.equations
@@ -1726,6 +1922,146 @@ class ConsoleApp:
                   self.message]
         return [clip(line, width) for line in lines], {}, cursor
 
+    def begin_problem_dialog(self, action, name=""):
+        if action == "delete" and name:
+            if name == "Default" or name not in self.problems:
+                raise CalcError("Choose a saved Problem to delete; Default is kept.")
+            self.problem_dialog = "confirm"
+            self.problem_delete_name = name
+        else:
+            self.problem_dialog = action
+        self.problem_dialog_text, self.problem_dialog_cursor = "", 0
+        self.problem_dialog_index = 0
+        self.problem_delete_confirm = False
+        self.open_menu = None
+        self.menu_stack.clear()
+        self.equation_open, self.table_open, self.help_open = False, False, False
+        self.message = "Enter: choose | Esc: cancel"
+
+    def problem_choices(self) -> list[str]:
+        return [name for name in sorted(self.problems, key=lambda name: (name != "Default", name.casefold()))
+                if (self.problem_dialog != "delete" or name != "Default")
+                and self.problem_dialog_text.casefold() in name.casefold()]
+
+    def handle_problem_key(self, key):
+        if key == "ESC":
+            self.problem_dialog = None
+            self.message = "Problem dialog canceled."
+            return
+        if self.problem_dialog == "confirm":
+            if key in ("LEFT", "RIGHT", "UP", "DOWN", "TAB"):
+                self.problem_delete_confirm = not self.problem_delete_confirm
+            elif key.lower() == "y":
+                self.problem_delete_confirm = True
+            elif key.lower() == "n":
+                self.problem_delete_confirm = False
+            elif key == "ENTER":
+                try:
+                    if self.problem_delete_confirm:
+                        self._delete_confirmed_problem()
+                    else:
+                        self.message = "Deletion canceled."
+                    self.problem_dialog = None
+                except CalcError as exc:
+                    self.message = "Error: " + str(exc)
+            return
+        if self.problem_dialog in ("open", "delete"):
+            names = self.problem_choices()
+            if key in ("UP", "DOWN", "PAGEUP", "PAGEDOWN", "HOME", "END"):
+                if key in ("HOME", "END"):
+                    self.problem_dialog_index = 0 if key == "HOME" else max(0, len(names) - 1)
+                else:
+                    delta = {"UP": -1, "DOWN": 1, "PAGEUP": -8, "PAGEDOWN": 8}[key]
+                    self.problem_dialog_index = max(0, min(len(names) - 1, self.problem_dialog_index + delta))
+            elif key == "ENTER" and names:
+                name = names[min(self.problem_dialog_index, len(names) - 1)]
+                if self.problem_dialog == "delete":
+                    self.problem_delete_name = name
+                    self.problem_delete_confirm = False
+                    self.problem_dialog = "confirm"
+                else:
+                    try:
+                        self.open_problem(name)
+                        self.problem_dialog = None
+                    except CalcError as exc:
+                        self.message = "Error: " + str(exc)
+            elif key == "BACKSPACE":
+                self.problem_dialog_text = self.problem_dialog_text[:-1]
+                self.problem_dialog_index = 0
+            elif len(key) == 1 and key.isprintable():
+                self.problem_dialog_text += key
+                self.problem_dialog_index = 0
+            return
+        text, position = self.problem_dialog_text, self.problem_dialog_cursor
+        if key == "ENTER":
+            try:
+                self.new_problem(text)
+                self.problem_dialog = None
+            except CalcError as exc:
+                self.message = "Error: " + str(exc)
+        elif key == "LEFT":
+            self.problem_dialog_cursor = max(0, position - 1)
+        elif key == "RIGHT":
+            self.problem_dialog_cursor = min(len(text), position + 1)
+        elif key == "HOME":
+            self.problem_dialog_cursor = 0
+        elif key == "END":
+            self.problem_dialog_cursor = len(text)
+        elif key == "CTRL_U":
+            self.problem_dialog_text, self.problem_dialog_cursor = "", 0
+        elif key == "BACKSPACE" and position:
+            self.problem_dialog_text = text[:position - 1] + text[position:]
+            self.problem_dialog_cursor -= 1
+        elif key == "DELETE":
+            self.problem_dialog_text = text[:position] + text[position + 1:]
+        elif len(key) == 1 and key.isprintable():
+            self.problem_dialog_text = text[:position] + key + text[position:]
+            self.problem_dialog_cursor += 1
+
+    def problem_dialog_frame(self, lines, width, height):
+        selected = {}
+        cursor = None
+        start = 0
+        if self.problem_dialog in ("open", "delete"):
+            names = self.problem_choices()
+            title = "Open Problem" if self.problem_dialog == "open" else "Delete Problem"
+            if self.problem_dialog_text:
+                title += " | " + self.problem_dialog_text
+            items = [{"label": name + (" (current)" if name == self.problem_name else "")} for name in names]
+            self.problem_dialog_index = min(self.problem_dialog_index, max(0, len(names) - 1))
+            panel, first = menu_panel(items, title, self.problem_dialog_index, min(width - 2, 64), height)
+            top, left = (height - len(panel)) // 2, (width - display_width(panel[0])) // 2
+            if names:
+                selected[top + 2 + self.problem_dialog_index - first] = (left + 1, left + display_width(panel[0]) - 1)
+        else:
+            box_width = min(width - 2, 64)
+            inside = box_width - 4
+            if self.problem_dialog == "new":
+                start = max(0, self.problem_dialog_cursor - inside + 1)
+                while display_width(self.problem_dialog_text[start:self.problem_dialog_cursor]) >= inside:
+                    start += 1
+                content = ["New Problem", "Name:", self.problem_dialog_text[start:], "",
+                           "Enter: create | Esc: cancel"]
+            else:
+                content = ["Delete Problem?", self.problem_delete_name,
+                           "Its history and equations will be deleted.", "Cancel   Delete", "Enter: confirm | Esc: cancel"]
+            border = "+" + "-" * (box_width - 2) + "+"
+            panel = [border]
+            for text in content:
+                text = clip(text, inside)
+                panel.append("| " + text + " " * (box_width - 3 - display_width(text)) + "|")
+            panel.append(border)
+            top, left = (height - len(panel)) // 2, (width - box_width) // 2
+            if self.problem_dialog == "new":
+                cursor = (top + 4, left + 3 + display_width(self.problem_dialog_text[start:self.problem_dialog_cursor]))
+            else:
+                begin = left + 2 + (9 if self.problem_delete_confirm else 0)
+                selected[top + 4] = (begin, begin + 6)
+        for row, content in enumerate(panel, top):
+            background = lines[row].ljust(width)
+            lines[row] = background[:left] + content + background[left + display_width(content):]
+        return lines, selected, cursor
+
     def frame(self, width=100, height=24):
         """Return plain text lines, selected character spans by row, and input cursor."""
         width, height = max(1, width), max(1, height)
@@ -1759,7 +2095,8 @@ class ConsoleApp:
             return self.equation_frame(width, height, "  ".join(menu_titles))
         if self.table_open:
             return self.table_frame(width, height, "  ".join(menu_titles))
-        lines = ["  ".join(menu_titles), "-" * width]
+        problem_heading = clip("-- Problem: " + self.problem_name + " ", width)
+        lines = ["  ".join(menu_titles), problem_heading + "-" * max(0, width - display_width(problem_heading))]
         selected: dict[int, tuple[int, int]] = {}
         # Choose a visible history window that follows either the newest result
         # or the older entry currently selected with the navigation keys.
@@ -1857,6 +2194,8 @@ class ConsoleApp:
             cursor = None
         elif index is not None:
             cursor = None
+        if self.problem_dialog is not None:
+            lines, selected, cursor = self.problem_dialog_frame(lines, width, height)
         lines = [clip(line, width) for line in lines]
         selected = {row: (first, min(last, len(lines[row]))) for row, (first, last) in selected.items()
                     if first < len(lines[row])}
@@ -2097,7 +2436,7 @@ def main(argv=None):
                 app.help_open = False
             elif text.strip() and app.running:
                 print(app.message)
-        if not app.save_history():
+        if not app.save_session():
             print(app.message, file=sys.stderr)
             return 1
         return 0
@@ -2112,7 +2451,7 @@ def main(argv=None):
         print(str(exc), file=sys.stderr)
         status = 1
     finally:
-        if not app.save_history():
+        if not app.save_session():
             print(app.message, file=sys.stderr)
             status = 1
     return status
