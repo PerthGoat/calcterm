@@ -97,7 +97,7 @@ class ConsoleTests(unittest.TestCase):
         before = self.app.history_path.read_bytes()
         self.app.command(":mode degree")
         self.assertEqual(self.app.history_path.read_bytes(), before)
-        self.assertFalse(self.config_path.exists())
+        self.assertTrue(self.config_path.exists())
         self.assertEqual(self.app.text, "1/0")
         restored = ConsoleApp(config_path=self.config_path)
         self.assertEqual(list(restored.calculator.history), list(self.app.calculator.history))
@@ -1051,7 +1051,7 @@ class ConsoleTests(unittest.TestCase):
         self.assertEqual(restored.config_path.read_text(encoding="utf-8"), document)
         restored.handle_key("F9")
         self.assertEqual([item["label"] for item in restored.menu_items()],
-                         ["Clear set variables", "Clear history"])
+                         ["Clear set variables", "Clear history", "Reset configuration"])
         restored.save_config()
         self.assertEqual(len(json.loads(restored.config_path.read_text(encoding="utf-8"))["menus"]), 6)
 
@@ -1327,6 +1327,7 @@ class ConsoleTests(unittest.TestCase):
             self.type_keys(label)
             self.app.handle_key("ENTER")
             self.assertEqual(self.app.calculator.output_mode, mode)
+            self.assertEqual(ConsoleApp(config_path=self.config_path).calculator.output_mode, mode)
             self.assertIsNone(self.app.open_menu)
             self.app.command(":precision 5")
             self.type_keys("1/3")
@@ -1339,13 +1340,11 @@ class ConsoleTests(unittest.TestCase):
         self.app.command(":format approximate")
         self.app.command(":precision 12")
         self.app.command(":unit thirdmeter = 1/3_m")
-        self.app.command(":save")
         restored = ConsoleApp(config_path=self.config_path)
         self.assertEqual(restored.calculator.output_mode, "approximate")
         self.assertEqual(restored.calculator.calculate("1/3"), "0.333333333333")
         self.assertEqual(restored.calculator.calculate("3_thirdmeter=>_m"), "1_m")
         restored.command(":format exact")
-        restored.command(":save")
         self.assertEqual(ConsoleApp(config_path=self.config_path).calculator.output_mode, "exact")
 
     def test_older_settings_default_to_exact_and_gain_output_options(self):
@@ -1374,7 +1373,7 @@ class ConsoleTests(unittest.TestCase):
     def test_custom_menu_and_unit_configuration_roundtrip(self):
         for command in [":mode degree", ":precision 123", ":recall expression", ":unit smoot = 1.7018_m",
                         ":unit span = 2_smoot", ":menu 1 Favorites", ":menuclear 1",
-                        ":menuadd 1 Epsilon | ε", ":menuadd 1 Radians | :mode radian", ":save"]:
+                        ":menuadd 1 Epsilon | ε", ":menuadd 1 Radians | :mode radian"]:
             self.app.command(command)
         restored = ConsoleApp(config_path=self.config_path)
         self.assertEqual(restored.calculator.mode, "degree")

@@ -34,7 +34,7 @@ output remain ordinary text.
 
 Colors are **on by default**. In **F5 Options**, select **Syntax colors: On/Off** to
 toggle them immediately. Text selection remains highlighted when colors are off.
-Use **Save configuration** in F5 (or `:save`) to keep the preference across restarts.
+The preference saves automatically and is restored when the app reopens.
 The setting is shared across Problems. Commands `:colors on`, `:colors off`, and
 `:colors toggle` also work; JSON settings use `"syntax_colors": true` or `false`.
 
@@ -45,7 +45,7 @@ The setting is shared across Problems. Commands `:colors on`, `:colors off`, and
 | F1–F6 | Open/close Math, Units, Constants, Symbols, Options, and Help menus |
 | F7 | Open the equation editor, or save the current equation and close it |
 | F8 | Open/close the table of checked equations |
-| F9 | Open/close Clean Up: Clear set variables or Clear history |
+| F9 | Open/close Clean Up: clear variables/history or reset configuration |
 | Ctrl+T in F7 | Check/uncheck the selected equation for the table |
 | Up / Down | Select history results and expressions while preserving the input cursor |
 | Enter with history selected | Insert the highlighted part at the input cursor |
@@ -109,6 +109,12 @@ Both actions preserve equations and `ans`. Clear history has moved out of Option
 older saved Options menus are updated when loaded. F9 is a built-in menu; the six
 F1–F6 menus keep their existing configuration format.
 
+The third item, **Reset configuration**, restores radians, exact output, 50-digit
+precision, result-first history recall, syntax colors on, and the default menus.
+The reset saves automatically. Saved Problems, equations, history, table settings,
+session variables/`ans`, and custom unit definitions are retained. The command
+`:resetconfig` performs the same reset.
+
 **F6 Help → Catalog** opens a large, centered popup with an alphabetical list of
 every built-in function, y1–y99 equation slots, symbols, operators, built-in values,
 physical constants, and units (including custom units). Custom single-character
@@ -143,8 +149,8 @@ Problems file described below. Existing history files are imported into Default;
 No `:save` is needed for history. `:clear` clears the current Problem's saved history.
 The history limit still follows the terminal height,
 with a minimum of 30. Restoring history displays the recorded expressions and results
-without evaluating them again. Variables last for the current session; `:save` saves
-general settings, custom units, and menus.
+without evaluating them again. Variables last for the current session. General
+settings, custom units, and menus save automatically when changed.
 
 ## Problems
 
@@ -339,7 +345,7 @@ Exact output is the default: fractions and irrational values remain symbolic, su
 You can also use `:format exact` or `:format approximate` (`:format approx` works too).
 `:precision 12` makes approximate output show up to 12 significant decimal digits:
 `1/3` displays as `0.333333333333`, and `3_in=>_ft` as `0.25_ft`. Integers remain intact.
-The status bar shows the current output mode. Use `:save` to keep the preference.
+The status bar shows the current output mode. Preference changes save automatically.
 
 Automatic approximation affects displayed results, including new history entries;
 calculations, variables, and `ans` retain their exact values. Switching modes leaves
@@ -399,7 +405,6 @@ Add a user-defined unit using a positive numeric quantity:
 :unit smoot = 1.7018_m
 :unit doubleSmoot = 2_smoot
 1_smoot=>_cm
-:save
 ```
 
 Custom units can use compound dimensions and previously defined units. Built-in
@@ -408,7 +413,7 @@ do not depend on session variables. Custom offset temperature units are not supp
 
 ## Configure menus
 
-Change labels and items in the app, then save:
+Change labels and items in the app; each change saves automatically:
 
 ```text
 :menu 1 Favorites
@@ -416,7 +421,6 @@ Change labels and items in the app, then save:
 :menuadd 1 Square | ^2
 :menuadd 1 Epsilon | ε
 :menuadd 1 Degrees | :mode degree
-:save
 ```
 
 A menu item runs a `:` command if its text begins with `:`; otherwise it inserts
@@ -424,8 +428,11 @@ text at the cursor. Each of the six menus can be configured. Options contains
 commands for radians/degrees, exact/approximate output, recall behavior, precision,
 menu editing, and saving.
 The settings file defaults to `calc_term_config.json` beside the script. Choose
-another with `python calc_term.py --config my_settings.json`. Changes persist when
-you execute `:save` or select Save configuration in F5.
+another with `python calc_term.py --config my_settings.json`. Validated changes to
+options, precision, history recall, syntax colors, custom units, and menus save
+immediately. A save error is displayed, preserving the previous file; pending
+configuration changes are retried on normal exit. The `:save` command and Save
+configuration menu item remain available for a manual retry.
 
 You can also edit the JSON file. It needs exactly six menus; each item needs a label
 and exactly one of `insert`, `command`, or an `items` list for a submenu. Submenus

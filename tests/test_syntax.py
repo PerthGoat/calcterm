@@ -152,7 +152,6 @@ class SyntaxTests(unittest.TestCase):
 
     def test_color_preference_persists_and_is_shared_between_problems(self):
         self.app.command(":colors off")
-        self.app.save_config()
         restored = ConsoleApp(config_path=self.app.config_path)
         self.assertFalse(restored.syntax_colors)
         self.assertIn("Syntax colors: Off", [item["label"] for item in restored.menus[4]["items"]])
@@ -161,7 +160,6 @@ class SyntaxTests(unittest.TestCase):
         restored.open_problem("Default")
         self.assertFalse(restored.syntax_colors)
         restored.command(":colors toggle")
-        restored.save_config()
         self.assertTrue(ConsoleApp(config_path=self.app.config_path).syntax_colors)
 
     def test_older_custom_options_gain_color_toggle_and_default_to_enabled(self):

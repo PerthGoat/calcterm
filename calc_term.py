@@ -1040,7 +1040,7 @@ def problem_menu():
 
 def cleanup_menu():
     return {"label": "Clean Up", "items": [command_item("Clear set variables", ":clearvars"),
-            command_item("Clear history", ":clear")]}
+            command_item("Clear history", ":clear"), command_item("Reset configuration", ":resetconfig")]}
 
 
 def catalog_items(calculator, menus):
@@ -1161,7 +1161,7 @@ HELP_LINES = [
     "Enter 4x for y1(x); return with F7 and calculate y1(3) to get 12.",
     "Ctrl+T in F7: check/uncheck a formula for the F8 table; new formulas are checked.",
     "F8: table; Tab: set start/step; Enter: apply; arrows/PageUp/PageDown: scroll.",
-    "F9 Clean Up: clear set variables or the current Problem's history.",
+    "F9 Clean Up: clear set variables/history, or reset configuration to defaults.",
     "F6 > Catalog: all functions/symbols; type to filter; Enter inserts; Esc closes.",
     "Type in a menu to filter; Backspace removes a filter character.",
     "Submenus: Enter/Right opens; Right on a leaf switches menus; Left/Esc goes back.",
@@ -1175,7 +1175,7 @@ HELP_LINES = [
     ":recall result|expression    :unset x    :vars    :clearvars    :clear    :save    :quit",
     "Decimals/fractions stay exact; approx(pi,100) requests a decimal approximation.",
     "Equations and Problems save automatically; F5 > Problems: new/open/delete.",
-    "Settings, custom units, and six menus are saved using :save.",
+    "Settings, custom units, and menus save automatically; :resetconfig restores defaults.",
 ]
 
 
@@ -1185,6 +1185,7 @@ class ConsoleApp:
     def __init__(self, calculator=None, config_path=None):
         self.calculator = calculator or Calculator()
         self.config_path = Path(config_path) if config_path else Path(__file__).with_name("calc_term_config.json")
+        self._config_dirty = False
         self.history_path = self.config_path.with_suffix(".history.json")
         self.problems_path = self.config_path.with_suffix(".problems.json")
         self.problem_name = "Default"
@@ -1409,7 +1410,15 @@ class ConsoleApp:
             self.commit_equation()
         if self.table_edit_field is not None:
             self.commit_table_settings()
-        return self.save_history()
+        config_saved = True
+        if self._config_dirty:
+            try:
+                self.save_config(announce=False)
+            except CalcError as exc:
+                self.message = "Error: " + str(exc)
+                config_saved = False
+        history_saved = self.save_history()
+        return config_saved and history_saved
 
     def _load_history(self):
         # History is display-only data; restoring it does not recreate variables or ans.
@@ -1520,7 +1529,7 @@ class ConsoleApp:
             # Invalid files never partially replace the live state.
             self.message = f"Config error: {exc} (using defaults; original file preserved)"
 
-    def save_config(self):
+    def save_config(self, announce=True):
         # Write beside the destination and replace it only after serialization succeeds.
         # General settings stay separate from the automatically saved Problems file.
         data = {"mode": self.calculator.mode, "precision": self.calculator.precision,
@@ -1538,8 +1547,23 @@ class ConsoleApp:
             temporary.replace(self.config_path)
         except OSError as exc:
             raise CalcError(f"Cannot save configuration: {exc}") from None
-        self.message = "Saved configuration to " + str(self.config_path)
+        self._config_dirty = False
+        if announce:
+            self.message = "Saved configuration to " + str(self.config_path)
         self.save_problems()
+
+    def reset_config(self):
+        # Reset preferences and menus while retaining calculation data and custom units.
+        self.calculator.set_mode("radian")
+        self.calculator.set_precision(50)
+        self.calculator.set_output_mode("exact")
+        self.history_insert = "result"
+        self.syntax_colors = True
+        self.menus = default_menus(self.calculator.registry)
+        self.open_menu = None
+        self.menu_stack.clear()
+        self.menu_index, self.menu_filter = 0, ""
+        self.message = "Configuration reset to defaults."
 
     @property
     def input_selection(self) -> tuple[int, int] | None:
@@ -1649,7 +1673,7 @@ class ConsoleApp:
                 raise CalcError("Use :colors on, :colors off, or :colors toggle.")
             self.syntax_colors = {"on": True, "off": False, "toggle": not self.syntax_colors}[arg]
             self.refresh_color_option()
-            self.message = "Syntax colors: " + ("On" if self.syntax_colors else "Off") + "; :save to keep settings."
+            self.message = "Syntax colors: " + ("On" if self.syntax_colors else "Off")
         elif name == ":problem":
             action, _, problem_name = arg.partition(" ")
             if action not in ("new", "open", "delete"):
@@ -1660,10 +1684,10 @@ class ConsoleApp:
                 self.begin_problem_dialog(action, problem_name)
         elif name == ":mode":
             self.calculator.set_mode(arg)
-            self.message = "Angle mode: " + self.calculator.mode + "; :save to keep settings."
+            self.message = "Angle mode: " + self.calculator.mode
         elif name == ":format":
             self.calculator.set_output_mode(arg)
-            self.message = "Output mode: " + self.calculator.output_mode + "; :save to keep settings."
+            self.message = "Output mode: " + self.calculator.output_mode
         elif name == ":precision":
             try:
                 self.calculator.set_precision(int(arg))
@@ -1683,6 +1707,8 @@ class ConsoleApp:
         elif name == ":clearvars":
             self.calculator.variables.clear()
             self.message = "Set variables cleared."
+        elif name == ":resetconfig":
+            self.reset_config()
         elif name == ":vars":
             self.message = "; ".join(f"{k} = {self.calculator.format(v)}" for k, v in self.calculator.variables.items()) or "No assigned variables."
         elif name == ":unset":
@@ -1699,7 +1725,7 @@ class ConsoleApp:
             unit = self.calculator.registry.get(unit_name)
             self.menus[1]["items"] = categorize_unit_items(self.calculator.registry,
                 self.menus[1]["items"] + [insert_item(unit.notation + " " + unit.label, unit.notation)])
-            self.message = "Added " + unit.notation + "; :save to keep it."
+            self.message = "Added " + unit.notation
         elif name in (":menu", ":menuadd", ":menuclear"):
             number, _, rest = arg.partition(" ")
             if number not in {"1", "2", "3", "4", "5", "6"}:
@@ -1717,11 +1743,15 @@ class ConsoleApp:
                     raise CalcError("Use :menuadd NUMBER LABEL | TEXT (or a :command).")
                 action = action.strip()
                 menu["items"].append(command_item(label.strip(), action) if action.startswith(":") else insert_item(label.strip(), action))
-            self.message = "Updated F" + number + " menu; :save to keep it."
+            self.message = "Updated F" + number + " menu."
         elif name == ":save":
             self.save_config()
         else:
             raise CalcError("Unknown command. Use :help for commands.")
+        if name in {":colors", ":mode", ":format", ":precision", ":recall", ":unit",
+                    ":menu", ":menuadd", ":menuclear", ":resetconfig"}:
+            self._config_dirty = True
+            self.save_config(announce=False)
 
     def submit(self, approximate=False):
         # Both interactive and plain mode share this command/calculation path.
