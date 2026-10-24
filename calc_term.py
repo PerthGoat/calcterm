@@ -1158,7 +1158,7 @@ class ConsoleApp:
         self._selected_input: str | None = None
         self._selection_anchor: int | None = None
         self.history_index = None
-        self.history_rows = 18  # Default 24-row terminal, minus menus and footer.
+        self.history_rows = 17  # Default 24-row terminal, minus menus and footer.
         self.history_start = 0
         self.history_part = "result"
         self.history_insert = "result"
@@ -1906,7 +1906,7 @@ class ConsoleApp:
         return clip(f" {self.problem_name} | {indicator} | {text.lstrip()}", width)
 
     def equation_frame(self, width, height, menu_title):
-        rows = height - 6
+        rows = height - 7
         first = min(max(0, self.equation_index - rows + 1), max(0, 99 - rows))
         lines = [menu_title, "Equations y1-y99 | F7: close | Enter: save"]
         selected = {}
@@ -1929,8 +1929,8 @@ class ConsoleApp:
         start = max(0, self.equation_cursor - available + 1)
         while display_width(self.equation_text[start:self.equation_cursor]) >= available:
             start += 1
-        lines += ["-" * width, prefix + self.equation_text[start:]]
-        cursor = (height - 2, display_width(prefix + self.equation_text[start:self.equation_cursor]) + 1)
+        lines += ["-" * width, prefix + self.equation_text[start:], "-" * width]
+        cursor = (height - 3, display_width(prefix + self.equation_text[start:self.equation_cursor]) + 1)
         lines += [f" Equation {self.equation_index + 1}/99 | Ctrl+T: check/uncheck | F8: table",
                   self.message]
         lines[-2] = self.status_with_shift(lines[-2], width)
@@ -2032,7 +2032,7 @@ class ConsoleApp:
                  row(["x"] + visible), "-" * width]
         start = self.calculator.parse(self.table_start)
         step = self.calculator.parse(self.table_step)
-        for offset in range(height - 8):
+        for offset in range(height - 9):
             if not names:
                 lines.append("Check equations in F7 (Ctrl+T)." if offset == 0 else "")
                 continue
@@ -2055,11 +2055,12 @@ class ConsoleApp:
             while display_width(text[first:self.table_cursor]) >= available:
                 first += 1
             lines.append(prefix + text[first:])
-            cursor = (height - 2, len(prefix) + display_width(text[first:self.table_cursor]) + 1)
+            cursor = (height - 3, len(prefix) + display_width(text[first:self.table_cursor]) + 1)
         else:
             lines.append("Tab: start/step | F7: equations | F8: close")
         first_column = self.table_column + 1 if names else 0
-        lines += [f" Row {self.table_row} | equations {first_column}-{self.table_column + len(visible)}/{len(names)} | arrows: scroll | Home: reset",
+        lines += ["-" * width,
+                  f" Row {self.table_row} | equations {first_column}-{self.table_column + len(visible)}/{len(names)} | arrows: scroll | Home: reset",
                   self.message]
         lines[-2] = self.status_with_shift(lines[-2], width)
         return [clip(line, width) for line in lines], {}, cursor
@@ -2278,8 +2279,8 @@ class ConsoleApp:
     def frame(self, width=100, height=24):
         """Return plain text lines, selected character spans by row, and input cursor."""
         width, height = max(1, width), max(1, height)
-        # Reserve two rows for the menu and four for the separator/input/status/message.
-        self.history_rows = max(1, height - 6)
+        # Reserve two menu rows and five for the input's two rules, input, status, and message.
+        self.history_rows = max(1, height - 7)
         history_limit = max(30, self.history_rows)
         history = self.calculator.history
         if history.maxlen != history_limit:
@@ -2378,6 +2379,7 @@ class ConsoleApp:
         c = self.calculator
         selection = ("selected " + self.history_part if index is not None else
                      "selected input" if self.input_selected else "recall " + self.history_insert)
+        lines.append("-" * width)
         lines.append(f" {c.mode.upper()} | history {len(c.history)}/{c.history.maxlen} | {c.output_mode} | approx {c.precision} digits | {selection}")
         lines.append(self.message)
         lines += [""] * (height - len(lines))
