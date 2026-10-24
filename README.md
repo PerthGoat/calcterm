@@ -36,7 +36,7 @@ or Ctrl+D. The interactive app restores the terminal when it exits.
 | Ctrl+T in F7 | Check/uncheck the selected equation for the table |
 | Up / Down | Select history results and expressions while preserving the input cursor |
 | Enter with history selected | Insert the highlighted part at the input cursor |
-| Enter in input | Calculate the expression or execute a `:` command |
+| Enter in input | Calculate and select the expression, or execute a `:` command |
 | Left / Right | Move the input cursor; open/return from submenus or switch top menus |
 | Home / End | Move to the input ends or the first/last dropdown item |
 | Backspace / Delete | Edit the input |
@@ -45,6 +45,14 @@ or Ctrl+D. The interactive app restores the terminal when it exits.
 | Esc | Return to input or close a menu/help |
 | Ctrl+U | Clear the input |
 | Ctrl+L | Redraw |
+
+After a calculation, the expression stays in the input bar with all its text selected.
+Backspace or Delete clears the selected expression; typing replaces it. Left moves the
+cursor to its beginning, and Right moves it to its end, clearing the selection so you
+can edit normally. Home/End also clears the selection and moves to the corresponding
+end. Enter again recalculates the expression. History, menu, and Catalog insertions
+replace selected input. Failed calculations use the same selection behavior; `:` commands
+continue to clear the input after successful execution.
 
 In a dropdown, use Up/Down and Enter to choose an item. Type to filter its labels;
 Backspace edits the filter. In F2, choose a unit category with Enter or Right, then

@@ -1098,6 +1098,8 @@ def validate_menus(menus):
 
 HELP_LINES = [
     "Up/Down: select history results/expressions; Enter: insert the highlighted part.",
+    "After calculation: input stays selected; type to replace; Backspace/Delete clears.",
+    "Left/Right on selected input: move to the beginning/end for editing.",
     "Left/Right: move cursor; Home/End: line ends; Tab: input/history focus.",
     "Esc: close menu or return to input; Ctrl+C / Ctrl+D: quit; Ctrl+L: redraw.",
     "F1-F6: menus; Up/Down or PageUp/PageDown: select; Enter: choose.",
@@ -1151,6 +1153,7 @@ class ConsoleApp:
         # Editing and history selection are separate: browsing must not move the cursor.
         self.text = ""
         self.cursor = 0
+        self._selected_input: str | None = None
         self.history_index = None
         self.history_rows = 18  # Default 24-row terminal, minus menus and footer.
         self.history_start = 0
@@ -1297,7 +1300,7 @@ class ConsoleApp:
         self.calculator, self.table_start, self.table_step = prepared
         self.problem_name = name
         self._saved_history = tuple(self.calculator.history)
-        self.text, self.cursor = "", 0
+        self.clear_input()
         self.history_index, self.history_start = None, 0
         self.equation_open, self.table_open, self.help_open = False, False, False
         self.catalog_open = False
@@ -1472,7 +1475,19 @@ class ConsoleApp:
         self.message = "Saved configuration to " + str(self.config_path)
         self.save_problems()
 
+    @property
+    def input_selected(self):
+        # Keep selection tied to its text if a caller replaces the input buffer.
+        return bool(self.text) and self._selected_input == self.text
+
+    def clear_input(self):
+        self.text, self.cursor, self.history_index = "", 0, None
+        self._selected_input = None
+
     def insert(self, text):
+        if self.input_selected:
+            self.clear_input()
+        self._selected_input = None
         self.text = self.text[:self.cursor] + text + self.text[self.cursor:]
         self.cursor += len(text)
         self.history_index = None
@@ -1613,17 +1628,23 @@ class ConsoleApp:
         try:
             if self.text.lstrip().startswith(":"):
                 self.command(self.text.strip())
+                self.clear_input()
             else:
                 self.calculator.evaluate(self.text)
                 self.message = self.calculator.history[-1].line
                 self.save_history()
-            self.text = ""
-            self.cursor = 0
+                self.cursor = len(self.text)
+                self._selected_input = self.text
             self.history_index = None
         except (CalcError, OSError) as exc:
             # Keep failed input in the editor for correction and persist any error entry.
             self.message = "Error: " + str(exc)
             self.history_index = None
+            if self.text.lstrip().startswith(":"):
+                self._selected_input = None
+            else:
+                self.cursor = len(self.text)
+                self._selected_input = self.text
             self.save_history()
 
     def handle_key(self, key):
@@ -1756,16 +1777,22 @@ class ConsoleApp:
                 self.submit()
         elif key == "LEFT":
             self.history_index = None
-            self.cursor = max(0, self.cursor - 1)
+            self.cursor = 0 if self.input_selected else max(0, self.cursor - 1)
+            self._selected_input = None
         elif key == "RIGHT":
             self.history_index = None
-            self.cursor = min(len(self.text), self.cursor + 1)
+            self.cursor = len(self.text) if self.input_selected else min(len(self.text), self.cursor + 1)
+            self._selected_input = None
         elif key == "HOME":
             self.history_index = None
             self.cursor = 0
+            self._selected_input = None
         elif key == "END":
             self.history_index = None
             self.cursor = len(self.text)
+            self._selected_input = None
+        elif key in ("BACKSPACE", "DELETE") and self.input_selected:
+            self.clear_input()
         elif key == "BACKSPACE" and self.cursor:
             self.text = self.text[:self.cursor - 1] + self.text[self.cursor:]
             self.cursor -= 1
@@ -1774,7 +1801,7 @@ class ConsoleApp:
             self.text = self.text[:self.cursor] + self.text[self.cursor + 1:]
             self.history_index = None
         elif key == "CTRL_U":
-            self.text, self.cursor, self.history_index = "", 0, None
+            self.clear_input()
         elif len(key) == 1 and key.isprintable():
             self.insert(key)
 
@@ -2290,8 +2317,12 @@ class ConsoleApp:
         input_row = len(lines)
         lines.append("> " + self.text[start_text:start_text + available])
         cursor = (input_row + 1, 3 + display_width(self.text[start_text:self.cursor]))
+        if self.input_selected and index is None:
+            selected[input_row] = (2, len(lines[input_row]))
+            cursor = None
         c = self.calculator
-        selection = "selected " + self.history_part if index is not None else "recall " + self.history_insert
+        selection = ("selected " + self.history_part if index is not None else
+                     "selected input" if self.input_selected else "recall " + self.history_insert)
         lines.append(f" {self.problem_name} | {c.mode.upper()} | history {len(c.history)}/{c.history.maxlen} | {c.output_mode} | approx {c.precision} digits | {selection}")
         lines.append(self.message)
         lines += [""] * (height - len(lines))
