@@ -2095,8 +2095,7 @@ class ConsoleApp:
             return self.equation_frame(width, height, "  ".join(menu_titles))
         if self.table_open:
             return self.table_frame(width, height, "  ".join(menu_titles))
-        problem_heading = clip("-- Problem: " + self.problem_name + " ", width)
-        lines = ["  ".join(menu_titles), problem_heading + "-" * max(0, width - display_width(problem_heading))]
+        lines = ["  ".join(menu_titles), "-" * width]
         selected: dict[int, tuple[int, int]] = {}
         # Choose a visible history window that follows either the newest result
         # or the older entry currently selected with the navigation keys.
@@ -2146,7 +2145,7 @@ class ConsoleApp:
         cursor = (input_row + 1, 3 + display_width(self.text[start_text:self.cursor]))
         c = self.calculator
         selection = "selected " + self.history_part if index is not None else "recall " + self.history_insert
-        lines.append(f" {c.mode.upper()} | history {len(c.history)}/{c.history.maxlen} | {c.output_mode} | approx {c.precision} digits | {selection}")
+        lines.append(f" {self.problem_name} | {c.mode.upper()} | history {len(c.history)}/{c.history.maxlen} | {c.output_mode} | approx {c.precision} digits | {selection}")
         lines.append(self.message)
         lines += [""] * (height - len(lines))
         if self.help_open:

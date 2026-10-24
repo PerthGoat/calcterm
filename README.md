@@ -96,7 +96,8 @@ general settings, custom units, and menus.
 
 Each Problem remembers its history, equations, equation checkmarks, and table start/step
 settings automatically. The current Problem saves before you switch, and the app reopens
-the last active Problem on startup. The calculator shows the current name above history.
+the last active Problem on startup. The calculator shows the current name at the bottom
+left of the status bar, before the angle mode.
 Names can contain spaces and Unicode, up to 80 printable characters; duplicates ignore case.
 
 Existing work belongs to **Default**, which remains available and cannot be deleted.
