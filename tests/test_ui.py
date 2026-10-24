@@ -117,8 +117,8 @@ class ConsoleTests(unittest.TestCase):
                 self.assertFalse(restored.calculator.history)
                 self.assertTrue(restored.save_history())
                 self.assertEqual(restored.history_path.read_text(encoding="utf-8"), data)
-        restored.command(":clear")
-        self.assertEqual(json.loads(restored.history_path.read_text(encoding="utf-8")), [])
+                restored.command(":clear")
+                self.assertEqual(json.loads(restored.history_path.read_text(encoding="utf-8")), [])
 
     def test_history_save_failure_preserves_file_and_calculation_then_retries(self):
         self.type_keys("5+3")

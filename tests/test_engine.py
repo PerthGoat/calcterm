@@ -114,6 +114,75 @@ class ExactArithmeticTests(unittest.TestCase):
             with self.subTest(source=source):
                 self.assertEqual(self.calc.evaluate(source).value, expected)
 
+    def test_bitwise_operators(self):
+        for source, expected in {
+            "5&3": 1, "5|3": 7, "5 xor 3": 6, "~5": -6,
+            "5<<2": 20, "20>>2": 5, "5<<0": 5, "5>>0": 5,
+            "~0": -1, "~-1": 0, "~~5": 5, "-5&3": 3,
+            "-5|3": -5, "-5 xor 3": -8, "-5>>1": -3, "-5<<1": -10,
+            "0hFF&0b1010": 10, "0o17 xor 0b1010": 5, "6/3&3": 2,
+        }.items():
+            with self.subTest(source=source):
+                value = self.calc.evaluate(source)
+                self.assertEqual(value.value, expected)
+                self.assertIsInstance(value.value, sp.Integer)
+                self.assertEqual(value.dims, ZERO)
+
+    def test_bitwise_precedence(self):
+        for source, expected in {
+            "1|2 xor 3": 1, "6 xor 3&1": 7, "6&1<<1": 2,
+            "1<<1+2": 8, "32>>1+2": 4, "1<<2*3": 64,
+            "8>>1>>1": 2, "1<<1<<2": 8, "2^3&3": 0,
+            "~2^2": -5, "2^~1": sp.Rational(1, 4), "~3!": -7,
+            "(1|2) xor 3": 0, "(6 xor 3)&1": 1,
+        }.items():
+            with self.subTest(source=source):
+                self.assertEqual(self.calc.evaluate(source).value, expected)
+        for source in ["5&3==1", "5 xor 3==6", "1<<2<8", "0<5&3<2", "20>>2>=5"]:
+            with self.subTest(source=source):
+                self.assertEqual(self.calc.calculate(source), "True")
+
+    def test_bitwise_arbitrary_precision_and_output_modes(self):
+        for mode in ("exact", "approximate"):
+            self.calc.set_output_mode(mode)
+            self.assertEqual(self.calc.evaluate("1<<1000").value, 1 << 1000)
+            self.assertEqual(self.calc.calculate("(1<<1000)|1"), str((1 << 1000) | 1))
+            self.assertEqual(self.calc.evaluate("~(1<<1000)").value, ~(1 << 1000))
+            self.assertEqual(self.calc.calculate("(1<<1000)>>999"), "2")
+
+    def test_bitwise_assignments_ans_history_and_names(self):
+        self.assertEqual(self.calc.calculate("0b1010|0h05->mask"), "15")
+        self.assertEqual(self.calc.history[-1].line, "10|5->mask = 15")
+        self.assertEqual(self.calc.calculate("ans xor 3"), "12")
+        self.assertEqual(self.calc.calculate("mask&7"), "7")
+        self.assertEqual(self.calc.calculate("~mask"), "-16")
+        self.assertEqual(self.calc.calculate(self.calc.history[-1].result), "-16")
+        self.calc.evaluate("2->xorValue")
+        self.assertEqual(self.calc.calculate("xorValue xor 3"), "1")
+
+    def test_invalid_bitwise_operands_preserve_state(self):
+        self.calc.evaluate("3->x")
+        for op in ("&", "|", "xor", "<<", ">>"):
+            for operand in ("1/2", "1_m", "True", "[1,2]", "i", "y", "approx(2)"):
+                for source in (f"({operand}) {op} 1->x", f"1 {op} ({operand})->x"):
+                    with self.subTest(source=source), self.assertRaisesRegex(CalcError, "dimensionless exact integers"):
+                        self.calc.evaluate(source)
+                    self.assertEqual(self.calc.answer.value, 3)
+                    self.assertEqual(self.calc.variables["x"].value, 3)
+                    self.assertTrue(self.calc.history[-1].is_error)
+        for operand in ("1/2", "1_m", "True", "[1,2]", "i", "y", "approx(2)"):
+            with self.subTest(operand=operand), self.assertRaisesRegex(CalcError, "dimensionless exact integers"):
+                self.calc.evaluate(f"~({operand})")
+
+    def test_invalid_bitwise_syntax_and_shift_counts(self):
+        for source in ("1<<-1", "1>>-1"):
+            with self.subTest(source=source), self.assertRaisesRegex(CalcError, "nonnegative"):
+                self.calc.evaluate(source)
+        for source in ("1&", "|2", "~", "5 xor", "xor", "1||2", "2->xor",
+                       "1=>1<<1", "1=>1|1", "1=>~1"):
+            with self.subTest(source=source), self.assertRaises(CalcError):
+                self.calc.evaluate(source)
+
     def test_assignment_and_case_sensitive_names(self):
         self.assertEqual(self.calc.calculate("3->x"), "3")
         self.assertEqual(self.calc.history[-1].line, "3->x = 3")

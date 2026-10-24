@@ -128,6 +128,31 @@ before comparing them if the result cannot otherwise be determined.
 Boolean results work with assignments, `ans`, and history recall; `True` and `False`
 are reserved literals. Booleans support equality comparisons and cannot be used
 in arithmetic, unit conversions, or scalar functions.
+
+Bitwise operators work on dimensionless exact integers:
+
+| Operator | Meaning | Example |
+| --- | --- | --- |
+| `&` | AND | `5&3 = 1` |
+| `\|` | OR | `5\|3 = 7` |
+| `xor` | Exclusive OR | `5 xor 3 = 6` |
+| `~` | NOT | `~5 = -6` |
+| `<<` | Shift left | `5<<2 = 20` |
+| `>>` | Shift right | `20>>2 = 5` |
+
+`^` remains exponentiation; use the lowercase word `xor` for exclusive OR. `xor` is
+reserved and cannot be assigned a value. Binary, octal, and hexadecimal inputs work:
+`0hFF & 0b1010` gives `10`. Results use decimal notation and support assignments,
+`ans`, and history recall. Integers have arbitrary width; negative values behave
+as signed integers with sign extension, so `~0` is `-1` and `-5>>1` is `-3`.
+Shift counts must be nonnegative. Fractions, units, booleans, symbolic values,
+and explicit floating-point approximations are rejected as bitwise operands.
+
+From higher to lower precedence: powers, unary `+ - ~`, multiplication/division,
+addition/subtraction, shifts, `&`, `xor`, `|`, then comparisons. Factorial and unit
+suffixes bind most tightly. For example, `1<<1+2` is `8`, and `5&3==1` is `True`.
+Use parentheses to override precedence.
+
 Functions include `sqrt`, `cbrt`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `sinh`,
 `cosh`, `tanh`, `exp`, `ln`, `log`, `abs`, `floor`, `ceil`, `factorial`, `min`, `max`,
 `simplify`, `expand`, `factor`, `diff`, `integrate`, `solve`, `subs`, and `approx`.

@@ -11,6 +11,7 @@ import argparse
 from collections import deque
 from dataclasses import dataclass, replace
 import json
+import operator
 import os
 from pathlib import Path
 import re
@@ -151,6 +152,21 @@ class Quantity:
                 raise CalcError("Remainder did not produce a scalar result.")
             return Quantity(value).checked()
         raise CalcError(f"Unknown operator: {op}")
+
+    def bitwise(self, op, other=None):
+        # Python integers provide arbitrary-width signed bit operations; converting
+        # back to SymPy keeps their results compatible with the rest of the engine.
+        if self.dims != ZERO or not isinstance(self.value, sp.Integer):
+            raise CalcError("Bitwise operators require dimensionless exact integers.")
+        left = int(self.value)
+        if op == "~":
+            return Quantity(sp.Integer(~left))
+        if other is None or other.dims != ZERO or not isinstance(other.value, sp.Integer):
+            raise CalcError("Bitwise operators require dimensionless exact integers.")
+        right = int(other.value)
+        if op in ("<<", ">>") and right < 0:
+            raise CalcError("A shift count must be a nonnegative integer.")
+        return Quantity(sp.Integer(BITWISE[op](left, right)))
 
     def compare(self, op, other):
         # Values already share SI coordinates, so compatible units compare directly.
@@ -426,10 +442,13 @@ BASE_LITERAL = re.compile(r"(?<!\w)0([bBhHoO])([^\W_]*(?:_[^\W_]+)*)", re.UNICOD
 TOKEN = re.compile(rf"(?P<number>{DIGITS}/{DIGITS}(?=_°?[^\W\d_])|"
                    rf"(?:{DIGITS}(?:\.(?:{DIGITS})?)?|\.{DIGITS})(?:[eE][+-]?{DIGITS})?)|"
                    r"(?P<unit>_°?[^\W\d_][^\W_]*)|(?P<name>[^\W\d_][^\W_]*)|"
-                   r"(?P<op>\*\*|<=|>=|==|!=|[<>=+\-*/^%(),!\[\]])", re.UNICODE)
+                   r"(?P<op>\*\*|<<|>>|<=|>=|==|!=|[&|~<>=+\-*/^%(),!\[\]])", re.UNICODE)
 # Explicit tables define the supported comparisons, reserved values, and functions.
 COMPARISONS = {"<": sp.Lt, ">": sp.Gt, "<=": sp.Le, ">=": sp.Ge,
                "=": sp.Eq, "==": sp.Eq, "!=": sp.Ne}
+# Keep ^ as exponentiation; the word xor supplies bitwise exclusive OR instead.
+BITWISE = {"&": operator.and_, "|": operator.or_, "xor": operator.xor,
+           "<<": operator.lshift, ">>": operator.rshift}
 RESERVED = {"pi": sp.pi, "π": sp.pi, "e": sp.E, "E": sp.E, "i": sp.I, "I": sp.I,
             "True": sp.true, "False": sp.false}
 FUNCTIONS = {"sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "sqrt", "cbrt",
@@ -531,6 +550,9 @@ class Parser:
             left = self.expression(25)
             if token == "-":
                 left = left.negate()
+        elif token == "~" and not self.unit_only:
+            # NOT has the same precedence as unary signs, below exponentiation.
+            left = self.expression(25).bitwise("~")
         elif token == "(":
             left = self.expression()
             self.expect(")")
@@ -552,7 +574,7 @@ class Parser:
             if self.unit_only and unit.constant:
                 raise CalcError("A physical constant is not a conversion target.")
             left = Quantity(unit.scale + (0 if self.unit_only else unit.offset), unit.dims, unit)
-        elif kind == "name" and not self.unit_only:
+        elif kind == "name" and not self.unit_only and token not in BITWISE:
             if self.peek()[1] == "(" and token in FUNCTIONS:
                 self.take()
                 args = []
@@ -603,27 +625,34 @@ class Parser:
             if token in COMPARISONS and minimum <= 5 and not self.unit_only:
                 # Compare adjacent operands in a chain, after all arithmetic.
                 previous = left
-                result = sp.true
+                result = True
                 while self.peek()[1] in COMPARISONS:
                     op = self.take()[1]
                     right = self.expression(6)
-                    result = sp.And(result, previous.compare(op, right).value)
+                    # Evaluate every pair, even after False, to keep reporting bad operands.
+                    comparison = previous.compare(op, right)
+                    result = result and comparison.value is sp.true
                     previous = right
-                left = Quantity(result)
+                left = Quantity(sp.true if result else sp.false)
                 continue
-            precedence = {"+": 10, "-": 10, "*": 20, "/": 20, "%": 20, "^": 30, "**": 30}.get(token)
+            # Arithmetic binds before shifts, AND, XOR, and OR; all bind before
+            # comparisons. Infix xor is recognized before implicit multiplication.
+            precedence = {"|": 6, "xor": 7, "&": 8, "<<": 9, ">>": 9,
+                          "+": 10, "-": 10, "*": 20, "/": 20, "%": 20, "^": 30, "**": 30}.get(token)
             implicit = False
             if precedence is None and (kind in ("number", "name") or token == "(") and not self.unit_only:
                 # Adjacent operands such as 2(x+1) imply multiplication.
                 precedence, token, implicit = 20, "*", True
             if precedence is None or precedence < minimum:
                 break
+            if token in BITWISE and self.unit_only:
+                raise CalcError("Bitwise operators cannot be used in conversion targets.")
             if not implicit:
                 self.take()
             # Equal precedence on the right makes powers associate right to left.
             # Other operators use a higher threshold so they associate left to right.
             right = self.expression(precedence if token in ("^", "**") else precedence + 1)
-            left = left.arithmetic("^" if token == "**" else token, right)
+            left = left.bitwise(token, right) if token in BITWISE else left.arithmetic("^" if token == "**" else token, right)
         return left.checked()
 
 
@@ -706,7 +735,7 @@ class Calculator:
             text, assignment = (part.strip() for part in text.split("->"))
             if not re.fullmatch(r"[^\W\d_][^\W_]*", assignment, re.UNICODE):
                 raise CalcError("A variable name starts with a letter and contains letters or digits.")
-            if assignment in RESERVED or assignment in FUNCTIONS or assignment == "ans":
+            if assignment in RESERVED or assignment in FUNCTIONS or assignment in BITWISE or assignment == "ans":
                 raise CalcError(f"'{assignment}' is reserved.")
         if "=>" in text:
             if text.count("=>") != 1:
@@ -970,6 +999,7 @@ HELP_LINES = [
     "Submenus: Enter/Right opens; Right on a leaf switches menus; Left/Esc goes back.",
     "3->x assigns x; x/X differ; _ft/_FT are the same unit.",
     "Comparisons: < > <= >= = == != return True or False; 3>6 is False.",
+    "Bitwise integers: & | xor ~ << >>; 5 xor 3 is 6; ^ remains exponentiation.",
     "3_in=>_ft converts; 3_m/_s=>_kph; 2_m^2 is 2 square meters.",
     ":unit smoot = 1.7018_m    :mode degree    :precision 100",
     ":format exact|approximate sets default output; :precision sets decimal digits.",
