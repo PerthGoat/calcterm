@@ -32,6 +32,7 @@ or Ctrl+D. The interactive app restores the terminal when it exits.
 | F1–F6 | Open/close Math, Units, Constants, Symbols, Options, and Help menus |
 | F7 | Open the equation editor, or save the current equation and close it |
 | F8 | Open/close the table of checked equations |
+| F9 | Open/close Clean Up: Clear set variables or Clear history |
 | Ctrl+T in F7 | Check/uncheck the selected equation for the table |
 | Up / Down | Select history results and expressions while preserving the input cursor |
 | Enter with history selected | Insert the highlighted part at the input cursor |
@@ -56,6 +57,12 @@ Submenus appear beside their parent when space permits, or over it in narrow ter
 F4 includes ε, μ, Ω, π, other Greek letters, °, Å, and
 arrows. Selection inserts the symbol at the input cursor. Terminal size must be at
 least 40 columns by 12 rows.
+
+**F9 Clean Up** contains **Clear set variables**, which makes assigned names symbolic
+again, and **Clear history**, which clears the current Problem's saved history.
+Both actions preserve equations and `ans`. Clear history has moved out of Options;
+older saved Options menus are updated when loaded. F9 is a built-in menu; the six
+F1–F6 menus keep their existing configuration format.
 
 The history limit is **at least 30 calculations, including errors**, increasing to the
 number of visible history rows in taller terminals. The panel fills the space
@@ -393,7 +400,7 @@ Omit `menus` to retain the built-in menus while configuring units or settings.
 Invalid configurations show an error, use defaults, and preserve the original file.
 Neither math input nor configuration executes Python or shell code.
 
-Other commands are `:vars`, `:unset NAME`, `:clear` (history), `:recall result`,
+Other commands are `:vars`, `:unset NAME`, `:clearvars` (all set variables), `:clear` (history), `:recall result`,
 `:recall expression`, `:mode radian`, `:mode degree`, `:format exact`,
 `:format approximate`, `:precision DIGITS`, `:help`,
 and `:quit`.

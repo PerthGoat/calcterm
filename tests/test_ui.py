@@ -212,7 +212,7 @@ class ConsoleTests(unittest.TestCase):
         self.app.calculator.define_equation("y1", "4x")
         self.app.handle_key("F7")
         self.type_keys("+")
-        for key in ("DOWN", "ENTER", "F7", "F1"):
+        for key in ("DOWN", "ENTER", "F7", "F1", "F9"):
             self.app.handle_key(key)
             self.assertTrue(self.app.equation_open)
             self.assertEqual(self.app.equation_index, 0)
@@ -343,7 +343,7 @@ class ConsoleTests(unittest.TestCase):
         self.app.handle_key("TAB")
         self.app.handle_key("CTRL_U")
         self.type_keys("0")
-        for key in ("ENTER", "F8", "F7", "F1"):
+        for key in ("ENTER", "F8", "F7", "F1", "F9"):
             self.app.handle_key(key)
             self.assertTrue(self.app.table_open)
             self.assertEqual(self.app.table_edit_field, 1)
@@ -744,6 +744,71 @@ class ConsoleTests(unittest.TestCase):
             self.assertEqual(self.app.open_menu, i)
             self.app.handle_key("F" + str(i+1))
             self.assertIsNone(self.app.open_menu)
+
+    def test_cleanup_clears_set_variables_and_preserves_equations_history_and_ans(self):
+        self.app.calculator.calculate("3->x")
+        self.app.calculator.calculate("4->X")
+        self.app.calculator.define_equation("y1", "4x")
+        history = list(self.app.calculator.history)
+        self.app.text, self.app.cursor = "2+", 2
+        self.app.handle_key("F9")
+        lines, selected, cursor = self.app.frame()
+        self.assertIn("F9 Clean Up", lines[0])
+        self.assertIn("Clear set variables", lines[next(iter(selected))])
+        self.assertIsNone(cursor)
+        self.app.handle_key("ENTER")
+        self.assertFalse(self.app.calculator.variables)
+        self.assertEqual(self.app.calculator.equations, {"y1": "4x"})
+        self.assertEqual(list(self.app.calculator.history), history)
+        self.assertEqual(self.app.calculator.answer.value, 4)
+        self.assertEqual((self.app.text, self.app.cursor), ("2+", 2))
+        self.assertEqual(self.app.calculator.calculate("x+X"), "X + x")
+
+    def test_cleanup_clears_history_and_preserves_set_variables_and_equations(self):
+        self.app.calculator.calculate("3->x")
+        self.app.calculator.define_equation("y1", "4x")
+        self.app.handle_key("F9")
+        self.app.handle_key("DOWN")
+        self.app.handle_key("ENTER")
+        self.assertFalse(self.app.calculator.history)
+        self.assertEqual(self.app.calculator.variables["x"].value, 3)
+        self.assertEqual(self.app.calculator.answer.value, 3)
+        self.assertEqual(self.app.calculator.equations, {"y1": "4x"})
+        self.assertFalse(ConsoleApp(config_path=self.config_path).calculator.history)
+
+    def test_cleanup_menu_toggles_and_participates_in_dropdown_navigation(self):
+        self.app.handle_key("F9")
+        self.app.handle_key("F9")
+        self.assertIsNone(self.app.open_menu)
+        self.app.handle_key("F6")
+        self.app.handle_key("RIGHT")
+        self.assertEqual(self.app.menu_root()["label"], "Clean Up")
+        self.app.handle_key("RIGHT")
+        self.assertEqual(self.app.open_menu, 0)
+        self.app.handle_key("LEFT")
+        self.assertEqual(self.app.menu_root()["label"], "Clean Up")
+        for width in (40, 80, 100):
+            lines, _, cursor = self.app.frame(width, 12)
+            self.assertIn("F9", lines[0])
+            self.assertTrue(all(display_width(line) <= width for line in lines))
+            self.assertIsNone(cursor)
+        self.app.handle_key("ESC")
+        self.assertIsNone(self.app.open_menu)
+
+    def test_saved_options_history_action_moves_to_cleanup_and_keeps_other_items(self):
+        self.app.menus[4]["items"].append({"label": "Clear history", "command": ":clear"})
+        self.app.menus[4]["items"].append({"label": "Custom option", "insert": "123"})
+        document = json.dumps({"menus": self.app.menus})
+        self.config_path.write_text(document, encoding="utf-8")
+        restored = ConsoleApp(config_path=self.config_path)
+        self.assertFalse(any(item.get("command") == ":clear" for item in restored.menus[4]["items"]))
+        self.assertIn("Custom option", [item["label"] for item in restored.menus[4]["items"]])
+        self.assertEqual(restored.config_path.read_text(encoding="utf-8"), document)
+        restored.handle_key("F9")
+        self.assertEqual([item["label"] for item in restored.menu_items()],
+                         ["Clear set variables", "Clear history"])
+        restored.save_config()
+        self.assertEqual(len(json.loads(restored.config_path.read_text(encoding="utf-8"))["menus"]), 6)
 
     def test_filter_units_and_insert(self):
         self.app.handle_key("F2")
@@ -1199,7 +1264,8 @@ class ConsoleTests(unittest.TestCase):
             keyboard.getwch.assert_not_called()
 
     def test_windows_equation_and_table_shortcuts(self):
-        for code, expected in ((["\x00", "A"], "F7"), (["\x00", "B"], "F8"), (["\x14"], "CTRL_T")):
+        for code, expected in ((["\x00", "A"], "F7"), (["\x00", "B"], "F8"),
+                               (["\x00", "C"], "F9"), (["\x14"], "CTRL_T")):
             with self.subTest(expected=expected):
                 keyboard = Mock()
                 keyboard.getwch.side_effect = code
@@ -1207,7 +1273,8 @@ class ConsoleTests(unittest.TestCase):
                     self.assertEqual(Terminal().read_key(), expected)
 
     def test_posix_equation_and_table_shortcuts(self):
-        for code, expected in ((b"\x1b[18~", "F7"), (b"\x1b[19~", "F8"), (b"\x14", "CTRL_T")):
+        for code, expected in ((b"\x1b[18~", "F7"), (b"\x1b[19~", "F8"),
+                               (b"\x1b[20~", "F9"), (b"\x14", "CTRL_T")):
             with self.subTest(expected=expected), patch("os.name", "posix"), patch("sys.stdin") as stdin, \
                     patch("select.select", return_value=([0], [], [])), \
                     patch("os.read", side_effect=[bytes([byte]) for byte in code]):

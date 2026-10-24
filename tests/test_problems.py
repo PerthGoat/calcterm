@@ -269,6 +269,21 @@ class ProblemTests(unittest.TestCase):
         self.assertEqual(restored.calculator.calculate("2"), "2")
         self.assertEqual(restored.calculator.calculate("y1(4)"), "2")
 
+    def test_cleanup_history_affects_only_the_current_problem(self):
+        self.calculate("3+4")
+        self.app.new_problem("Algebra")
+        self.equation("4x")
+        self.calculate("5+3")
+        self.app.handle_key("F9")
+        self.app.handle_key("DOWN")
+        self.app.handle_key("ENTER")
+        restored = ConsoleApp(config_path=self.config)
+        self.assertEqual(restored.problem_name, "Algebra")
+        self.assertFalse(restored.calculator.history)
+        self.assertEqual(restored.calculator.equations, {"y1": "4x"})
+        restored.open_problem("Default")
+        self.assertEqual([entry.result for entry in restored.calculator.history], ["7"])
+
 
 if __name__ == "__main__":
     unittest.main()

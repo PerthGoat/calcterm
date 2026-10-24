@@ -987,6 +987,11 @@ def problem_menu():
             command_item("Open Problem", ":problem open"), command_item("Delete Problem", ":problem delete")]}
 
 
+def cleanup_menu():
+    return {"label": "Clean Up", "items": [command_item("Clear set variables", ":clearvars"),
+            command_item("Clear history", ":clear")]}
+
+
 def default_menus(registry):
     # Build F1-F6 from the current registry, including any loaded custom units.
     units = sorted((u for u in registry.units.values() if not u.constant), key=lambda u: (u.category, u.name))
@@ -1005,7 +1010,7 @@ def default_menus(registry):
          command_item("Select result first", ":recall result"), command_item("Select expression first", ":recall expression"),
          insert_item("Set precision", ":precision 100"), insert_item("Rename a menu", ":menu 1 Math"),
          insert_item("Add menu item", ":menuadd 1 Square | ^2"), command_item("Save configuration", ":save"),
-         command_item("Clear history", ":clear"), command_item("Quit", ":quit")]},
+         command_item("Quit", ":quit")]},
         {"label": "Help", "items": [command_item("Keyboard help", ":help"),
          insert_item("Exact decimal example", "0.1 + 0.2"), insert_item("Conversion example", "3_in=>_ft"),
          insert_item("Assignment example", "3->x"), insert_item("Symbolic example", "expand((y+1)^2)"),
@@ -1057,6 +1062,7 @@ HELP_LINES = [
     "Enter 4x for y1(x); return with F7 and calculate y1(3) to get 12.",
     "Ctrl+T in F7: check/uncheck a formula for the F8 table; new formulas are checked.",
     "F8: table; Tab: set start/step; Enter: apply; arrows/PageUp/PageDown: scroll.",
+    "F9 Clean Up: clear set variables or the current Problem's history.",
     "Type in a menu to filter; Backspace removes a filter character.",
     "Submenus: Enter/Right opens; Right on a leaf switches menus; Left/Esc goes back.",
     "3->x assigns x; x/X differ; _ft/_FT are the same unit.",
@@ -1066,7 +1072,7 @@ HELP_LINES = [
     ":unit smoot = 1.7018_m    :mode degree    :precision 100",
     ":format exact|approximate sets default output; :precision sets decimal digits.",
     ":menu 1 Favorites    :menuadd 1 Square | ^2    :menuclear 1",
-    ":recall result|expression    :unset x    :vars    :clear    :save    :quit",
+    ":recall result|expression    :unset x    :vars    :clearvars    :clear    :save    :quit",
     "Decimals/fractions stay exact; approx(pi,100) requests a decimal approximation.",
     "Equations and Problems save automatically; F5 > Problems: new/open/delete.",
     "Settings, custom units, and six menus are saved using :save.",
@@ -1101,7 +1107,7 @@ class ConsoleApp:
         self.history_start = 0
         self.history_part = "result"
         self.history_insert = "result"
-        # open_menu selects F1-F6; the stack remembers each submenu's parent selection
+        # open_menu selects F1-F6 or F9 (index 8); the stack remembers parent selection
         # and filter so Left/Esc can restore the exact navigation state.
         self.open_menu = None
         self.menu_index = 0
@@ -1384,6 +1390,8 @@ class ConsoleApp:
                         menus[4]["items"].append(option)
             if not any(item.get("label") == "Problems" and "items" in item for item in menus[4]["items"]):
                 menus[4]["items"].append(problem_menu())
+            # Older settings included the built-in history action under Options.
+            menus[4]["items"] = [item for item in menus[4]["items"] if item.get("command") != ":clear"]
             self.calculator = calculator
             self.history_insert = recall
             self.menus = menus
@@ -1442,11 +1450,16 @@ class ConsoleApp:
         else:
             self.history_index, self.history_part = parts[position]
 
+    def menu_root(self):
+        if self.open_menu is None:
+            raise CalcError("No menu is open.")
+        return cleanup_menu() if self.open_menu == 8 else self.menus[self.open_menu]
+
     def menu_items(self):
         # Filtering applies to the active submenu, or the root when no submenu is open.
         if self.open_menu is None:
             return []
-        menu = self.menu_stack[-1][0] if self.menu_stack else self.menus[self.open_menu]
+        menu = self.menu_stack[-1][0] if self.menu_stack else self.menu_root()
         return filter_menu_items(menu["items"], self.menu_filter.casefold())
 
     def open_submenu(self, item):
@@ -1496,6 +1509,9 @@ class ConsoleApp:
             self.history_index = None
             self.message = "History cleared."
             self.save_history(force=True)
+        elif name == ":clearvars":
+            self.calculator.variables.clear()
+            self.message = "Set variables cleared."
         elif name == ":vars":
             self.message = "; ".join(f"{k} = {self.calculator.format(v)}" for k, v in self.calculator.variables.items()) or "No assigned variables."
         elif name == ":unset":
@@ -1591,7 +1607,7 @@ class ConsoleApp:
                 self.equation_open = True
                 self.load_equation()
             return
-        if key.startswith("F") and key[1:].isdigit() and 1 <= int(key[1:]) <= 6:
+        if key in ("F1", "F2", "F3", "F4", "F5", "F6", "F9"):
             if self.table_edit_field is not None and not self.commit_table_settings():
                 return
             self.table_open = False
@@ -1627,7 +1643,8 @@ class ConsoleApp:
             elif key in ("LEFT", "RIGHT"):
                 # Right on a leaf (or empty filter) advances to the next top menu.
                 # Left inside a submenu was handled above by returning to its parent.
-                self.open_menu = (self.open_menu + (1 if key == "RIGHT" else -1)) % 6
+                menus = (0, 1, 2, 3, 4, 5, 8)
+                self.open_menu = menus[(menus.index(self.open_menu) + (1 if key == "RIGHT" else -1)) % len(menus)]
                 self.menu_index = 0
                 self.menu_filter = ""
                 self.menu_stack.clear()
@@ -2081,16 +2098,18 @@ class ConsoleApp:
         if width < 40 or height < 12:
             lines = ["Please resize the terminal to at least 40 columns and 12 rows.", self.message]
             return [clip(line, width) for line in lines[:height]], {}, None
-        label_width = max(1, (width - 38) // 8)
+        label_width = max(1, (width - 43) // 9)
         menu_titles = [f"F{i + 1} {menu['label']}" for i, menu in enumerate(self.menus)]
         menu_titles.append("F7 Equations")
         menu_titles.append("F8 Table")
+        menu_titles.append("F9 Clean Up")
         if display_width("  ".join(menu_titles)) > width:
             menu_titles = [f"F{i + 1} {clip(menu['label'], label_width)}" for i, menu in enumerate(self.menus)]
-            menu_titles.append("F7 " + clip("Equations", label_width))
+            menu_titles.append("F7 Equations")
             menu_titles.append("F8 " + clip("Table", label_width))
+            menu_titles.append("F9 Clean Up")
         if display_width("  ".join(menu_titles)) > width:
-            menu_titles = [f"F{i}" for i in range(1, 9)]
+            menu_titles = [f"F{i}" for i in range(1, 10)]
         if self.equation_open:
             return self.equation_frame(width, height, "  ".join(menu_titles))
         if self.table_open:
@@ -2159,7 +2178,7 @@ class ConsoleApp:
         elif self.open_menu is not None:
             # Rebuild each level from the saved navigation stack, placing child panels
             # beside their parents where space allows. Only the active level is selected.
-            root = self.menus[self.open_menu]
+            root = self.menu_root()
             levels = [root] + [item for item, _, _ in self.menu_stack]
             indices = [parent_index for _, parent_index, _ in self.menu_stack] + [self.menu_index]
             filters = [parent_filter for _, _, parent_filter in self.menu_stack] + [self.menu_filter]
@@ -2249,13 +2268,13 @@ def menu_panel(items, heading, index, width, height, submenu=False):
 # Map Windows extended keys and POSIX escape sequences to shared UI key names.
 WINDOWS_KEYS = {"H": "UP", "P": "DOWN", "K": "LEFT", "M": "RIGHT", "G": "HOME", "O": "END",
                 "I": "PAGEUP", "Q": "PAGEDOWN", "S": "DELETE", ";": "F1", "<": "F2", "=": "F3",
-                ">": "F4", "?": "F5", "@": "F6", "A": "F7", "B": "F8"}
+                ">": "F4", "?": "F5", "@": "F6", "A": "F7", "B": "F8", "C": "F9"}
 ANSI_KEYS = {"\x1b[A": "UP", "\x1b[B": "DOWN", "\x1b[C": "RIGHT", "\x1b[D": "LEFT",
              "\x1b[H": "HOME", "\x1b[F": "END", "\x1b[1~": "HOME", "\x1b[4~": "END",
              "\x1b[7~": "HOME", "\x1b[8~": "END", "\x1b[3~": "DELETE", "\x1b[5~": "PAGEUP",
              "\x1b[6~": "PAGEDOWN", "\x1bOP": "F1", "\x1bOQ": "F2", "\x1bOR": "F3",
              "\x1bOS": "F4", "\x1b[11~": "F1", "\x1b[12~": "F2", "\x1b[13~": "F3",
-             "\x1b[14~": "F4", "\x1b[15~": "F5", "\x1b[17~": "F6", "\x1b[18~": "F7", "\x1b[19~": "F8",
+             "\x1b[14~": "F4", "\x1b[15~": "F5", "\x1b[17~": "F6", "\x1b[18~": "F7", "\x1b[19~": "F8", "\x1b[20~": "F9",
              "\x1bOH": "HOME", "\x1bOF": "END"}
 CONTROL_KEYS = {"\r": "ENTER", "\n": "ENTER", "\x1b": "ESC", "\t": "TAB", "\x08": "BACKSPACE",
                 "\x7f": "BACKSPACE", "\x03": "CTRL_C", "\x04": "CTRL_D", "\x15": "CTRL_U", "\x0c": "CTRL_L",
