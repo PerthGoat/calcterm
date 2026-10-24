@@ -1180,6 +1180,7 @@ class ConsoleApp:
         self.table_edit_field: int | None = None
         self.table_fields = ["0", "1"]
         self.table_cursor = 0
+        self.shift_pressed = False
         self.message = "F7: equations | F8: table | F6: help | Enter: calculate | :quit: exit"
         self.help_open = False
         self.running = True
@@ -1900,6 +1901,10 @@ class ConsoleApp:
             self.equation_text = self.equation_text[:position] + key + self.equation_text[position:]
             self.equation_cursor += 1
 
+    def status_with_shift(self, text, width):
+        indicator = "↑" if self.shift_pressed else " "
+        return clip(f" {self.problem_name} | {indicator} | {text.lstrip()}", width)
+
     def equation_frame(self, width, height, menu_title):
         rows = height - 6
         first = min(max(0, self.equation_index - rows + 1), max(0, 99 - rows))
@@ -1928,6 +1933,7 @@ class ConsoleApp:
         cursor = (height - 2, display_width(prefix + self.equation_text[start:self.equation_cursor]) + 1)
         lines += [f" Equation {self.equation_index + 1}/99 | Ctrl+T: check/uncheck | F8: table",
                   self.message]
+        lines[-2] = self.status_with_shift(lines[-2], width)
         lines = [clip(line, width) for line in lines]
         selected = {row: (begin, min(end, len(lines[row]))) for row, (begin, end) in selected.items()}
         return lines, selected, cursor
@@ -2055,6 +2061,7 @@ class ConsoleApp:
         first_column = self.table_column + 1 if names else 0
         lines += [f" Row {self.table_row} | equations {first_column}-{self.table_column + len(visible)}/{len(names)} | arrows: scroll | Home: reset",
                   self.message]
+        lines[-2] = self.status_with_shift(lines[-2], width)
         return [clip(line, width) for line in lines], {}, cursor
 
     def open_catalog(self):
@@ -2371,7 +2378,7 @@ class ConsoleApp:
         c = self.calculator
         selection = ("selected " + self.history_part if index is not None else
                      "selected input" if self.input_selected else "recall " + self.history_insert)
-        lines.append(f" {self.problem_name} | {c.mode.upper()} | history {len(c.history)}/{c.history.maxlen} | {c.output_mode} | approx {c.precision} digits | {selection}")
+        lines.append(f" {c.mode.upper()} | history {len(c.history)}/{c.history.maxlen} | {c.output_mode} | approx {c.precision} digits | {selection}")
         lines.append(self.message)
         lines += [""] * (height - len(lines))
         if self.help_open:
@@ -2423,6 +2430,7 @@ class ConsoleApp:
             lines, selected, cursor = self.problem_dialog_frame(lines, width, height)
         elif self.catalog_open:
             lines, selected, cursor = self.catalog_frame(lines, width, height)
+        lines[-2] = self.status_with_shift(lines[-2], width)
         lines = [clip(line, width) for line in lines]
         selected = {row: (first, min(last, len(lines[row]))) for row, (first, last) in selected.items()
                     if first < len(lines[row])}
@@ -2653,7 +2661,8 @@ class Terminal:
         sys.stdout.flush()
 
     def run(self, app):
-        # Poll periodically to detect resizes while idle; redraw after input or size changes.
+        # Poll modifiers as well as input so a bare Shift press/release can redraw.
+        app.shift_pressed = self.read_shift_state()
         self.render(app)
         while app.running:
             key = self.read_key(timeout=0.1)
@@ -2661,8 +2670,16 @@ class Terminal:
                 app.handle_key(key)
             if not app.running:
                 break
-            if key is not None or shutil.get_terminal_size((100, 24)) != self.size:
+            shift_pressed = self.read_shift_state()
+            shift_changed = shift_pressed != app.shift_pressed
+            app.shift_pressed = shift_pressed
+            if key is not None or shift_changed or shutil.get_terminal_size((100, 24)) != self.size:
                 self.render(app)
+
+    def read_shift_state(self):
+        # POSIX character reports do not provide reliable standalone modifier releases.
+        # Do not infer a held key from the last Shift shortcut, which could stick on.
+        return windows_shift_pressed() if os.name == "nt" else False
 
 
 # Entry point: the same calculator supports batch, line-oriented, and full-screen use.

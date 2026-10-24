@@ -72,6 +72,12 @@ opposite direction. Typing, history recall, and menu/Catalog insertions replace 
 the selected portion, while Backspace/Delete removes it. Plain Left/Right collapses
 a partial selection to its left/right edge.
 
+On Windows, the bottom status bar shows `ProblemName | ↑ | RADIAN` while Shift is
+physically held. The arrow slot stays blank when released, keeping the layout stable.
+It updates even without another key
+press and is also shown in the equation editor and table. Other platforms keep it
+hidden because ordinary terminal input does not reliably report bare Shift releases.
+
 In a dropdown, use Up/Down and Enter to choose an item. Type to filter its labels;
 Backspace edits the filter. In F2, choose a unit category with Enter or Right, then
 choose its unit with Enter. Left or Esc returns to the category list; Esc again

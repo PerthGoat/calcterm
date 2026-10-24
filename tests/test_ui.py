@@ -1485,6 +1485,66 @@ class ConsoleTests(unittest.TestCase):
         self.assertEqual(frame.call_count, 2)  # Initial frame and the input edit.
         self.assertEqual(self.app.text, "2")
 
+    def test_shift_indicator_is_only_shown_while_held_in_all_status_bars(self):
+        for view in (None, "F7", "F8"):
+            self.app.equation_open, self.app.table_open = False, False
+            if view is not None:
+                self.app.handle_key(view)
+            for width in (40, 100):
+                with self.subTest(view=view, width=width):
+                    self.app.shift_pressed = False
+                    idle_status = self.app.frame(width, 24)[0][-2]
+                    self.assertEqual(idle_status.split(" | ")[1], " ")
+                    self.app.shift_pressed = True
+                    lines, _, _ = self.app.frame(width, 24)
+                    self.assertEqual(lines[-2].split(" | ")[1], "↑")
+                    self.assertTrue(lines[-2].startswith(" Default | ↑ | "))
+                    self.assertEqual(lines[-2].replace("↑", " "), idle_status)
+                    self.assertTrue(all(display_width(line) <= width for line in lines))
+                    self.app.shift_pressed = False
+                    self.assertEqual(self.app.frame(width, 24)[0][-2], idle_status)
+
+    def test_bare_shift_press_and_release_redraw_without_input_and_do_not_stick(self):
+        terminal = Terminal()
+        statuses = []
+        frame = self.app.frame
+
+        def capture(width, height):
+            result = frame(width, height)
+            statuses.append(result[0][-2])
+            return result
+
+        with patch("sys.stdout", new_callable=io.StringIO), \
+                patch("shutil.get_terminal_size", return_value=(80, 24)), \
+                patch.object(terminal, "read_key", side_effect=[None, None, None, "CTRL_C"]), \
+                patch.object(terminal, "read_shift_state", side_effect=[False, True, True, False]), \
+                patch.object(self.app, "frame", side_effect=capture):
+            terminal.run(self.app)
+        self.assertEqual([status.split(" | ")[1] for status in statuses], [" ", "↑", " "])
+        self.assertFalse(self.app.shift_pressed)
+        self.assertEqual(self.app.text, "")
+        self.assertFalse(self.app.calculator.history)
+
+    def test_shift_already_held_is_shown_on_the_first_frame(self):
+        terminal = Terminal()
+        with patch("sys.stdout", new_callable=io.StringIO) as output, \
+                patch("shutil.get_terminal_size", return_value=(80, 24)), \
+                patch.object(terminal, "read_key", return_value="CTRL_C"), \
+                patch.object(terminal, "read_shift_state", return_value=True):
+            terminal.run(self.app)
+        self.assertTrue(self.app.shift_pressed)
+        self.assertIn("↑", output.getvalue())
+
+    def test_live_shift_poll_uses_windows_state_and_does_not_guess_from_posix_shortcuts(self):
+        terminal = Terminal()
+        with patch("os.name", "nt"), patch("calc_term.windows_shift_pressed", side_effect=[True, False]):
+            self.assertTrue(terminal.read_shift_state())
+            self.assertFalse(terminal.read_shift_state())
+        with patch("os.name", "posix"), patch("calc_term.windows_shift_pressed") as native_state:
+            self.app.handle_key("SHIFT_RIGHT")
+            self.assertFalse(terminal.read_shift_state())
+            native_state.assert_not_called()
+
     def test_resize_to_small_terminal_clears_old_rows(self):
         terminal = Terminal()
         with patch("sys.stdout", new_callable=io.StringIO) as output, \
