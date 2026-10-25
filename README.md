@@ -452,6 +452,13 @@ immediately. A save error is displayed, preserving the previous file; pending
 configuration changes are retried on normal exit. The `:save` command and Save
 configuration menu item remain available for a manual retry.
 
+Choose **F5 Options → Create backup config** or run `:backupconfig` to copy the
+current settings file beside the original. Backups use numbered names such as
+`calc_term_config.backup1.json`, `calc_term_config.backup2.json`, and so on;
+existing backups are never overwritten. If no settings file exists yet, the app
+saves the current settings first. This backs up the configuration file; saved
+Problems and history have their own separate files.
+
 You can also edit the JSON file. It needs exactly six menus; each item needs a label
 and exactly one of `insert`, `command`, or an `items` list for a submenu. Submenus
 can nest up to eight levels. Older flat F2 unit lists are grouped by category when

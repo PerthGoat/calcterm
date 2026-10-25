@@ -35,7 +35,7 @@ class SyntaxTests(unittest.TestCase):
                 self.assertEqual(ANSI.sub("", colored), source)
                 self.assertTrue(all(0 <= first < last <= len(source) for first, last, _ in spans))
         colored = colorize_line(":precision 12", expression_highlights(":precision 12"))
-        self.assertIn("\x1b[94m:precision\x1b[0m", colored)
+        self.assertIn("\x1b[96m:precision\x1b[0m", colored)
         self.assertIn("\x1b[38;2;184;134;11m12\x1b[0m", colored)
         self.assertFalse(self.app.calculator.history)
 
@@ -44,7 +44,7 @@ class SyntaxTests(unittest.TestCase):
         colored = colorize_line(source, expression_highlights(source), selected=(1, 8))
         self.assertIn("\x1b[7mqrt(123\x1b[0m", colored)
         self.assertEqual(colored.count("\x1b[7m"), 1)
-        self.assertIn("\x1b[96ms\x1b[0m", colored)
+        self.assertIn("\x1b[94ms\x1b[0m", colored)
         self.assertIn("\x1b[95mpi\x1b[0m", colored)
         self.assertEqual(ANSI.sub("", colored), source)
 
@@ -59,7 +59,8 @@ class SyntaxTests(unittest.TestCase):
                 patch("shutil.get_terminal_size", return_value=(100, 24)):
             Terminal().render(self.app)
         colored = output.getvalue()
-        for fragment in ("\x1b[96msqrt\x1b[0m", "\x1b[38;2;184;134;11m2\x1b[0m",
+        for fragment in ("\x1b[94msqrt\x1b[0m", "\x1b[96m(\x1b[0m", "\x1b[96m)+\x1b[0m",
+                         "\x1b[38;2;184;134;11m2\x1b[0m",
                          "\x1b[95mpi\x1b[0m", "\x1b[92m_m\x1b[0m"):
             self.assertIn(fragment, colored)
         self.assertEqual(ANSI.sub("", colored), "".join(lines))
@@ -74,7 +75,7 @@ class SyntaxTests(unittest.TestCase):
         input_row = len(lines) - 4
         self.assertTrue(lines[input_row].startswith("> t("))
         colored = colorize_line(lines[input_row], self.app.syntax_highlights[input_row], selected.get(input_row))
-        self.assertTrue(colored.startswith("> \x1b[96mt\x1b[0m"))
+        self.assertTrue(colored.startswith("> \x1b[94mt\x1b[0m"))
         self.assertEqual(ANSI.sub("", colored), lines[input_row])
 
     def test_equation_definitions_and_table_cells_have_colors_without_coloring_grid_lines(self):
@@ -83,7 +84,7 @@ class SyntaxTests(unittest.TestCase):
         lines, _, _ = self.app.frame()
         input_row = len(lines) - 4
         colored = colorize_line(lines[input_row], self.app.syntax_highlights[input_row])
-        self.assertIn("\x1b[96my1\x1b[0m", colored)
+        self.assertIn("\x1b[94my1\x1b[0m", colored)
         self.assertIn("\x1b[38;2;184;134;11m4\x1b[0m", colored)
         self.app.handle_key("F8")
         lines, _, _ = self.app.frame()

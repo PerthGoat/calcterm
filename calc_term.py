@@ -460,8 +460,8 @@ TRANSLATE = str.maketrans({"→": "->", "⇒": "=>", "×": "*", "÷": "/", "−"
                            "≤": "<=", "≥": ">=", "≠": "!="})
 SYNTAX_TOKEN = re.compile(r"(?P<base>0[bB][01_]*|0[hH][0-9a-fA-F_]*|0[oO][0-7_]*)|"
                           + TOKEN.pattern + r"|(?P<unicode>[→⇒×÷−²³≤≥≠])", re.UNICODE)
-SYNTAX_COLORS = {"number": "38;2;184;134;11", "function": "96", "constant": "95",
-                 "unit": "92", "operator": "94", "command": "94"}
+SYNTAX_COLORS = {"number": "38;2;184;134;11", "function": "94", "constant": "95",
+                 "unit": "92", "operator": "96", "command": "96"}
 
 
 def expression_highlights(text) -> list[tuple[int, int, str]]:
@@ -1105,6 +1105,7 @@ def default_menus(registry):
          command_item("Select result first", ":recall result"), command_item("Select expression first", ":recall expression"),
          insert_item("Set precision", ":precision 100"), insert_item("Rename a menu", ":menu 1 Math"),
          insert_item("Add menu item", ":menuadd 1 Square | ^2"), command_item("Save configuration", ":save"),
+         command_item("Create backup config", ":backupconfig"),
          command_item("Quit", ":quit")]},
         {"label": "Help", "items": [command_item("Keyboard help", ":help"), command_item("Catalog", ":catalog"),
          insert_item("Exact decimal example", "0.1 + 0.2"), insert_item("Conversion example", "3_in=>_ft"),
@@ -1178,6 +1179,7 @@ HELP_LINES = [
     "Decimals/fractions stay exact; approx(pi,100) requests a decimal approximation.",
     "Equations and Problems save automatically; F5 > Problems: new/open/delete.",
     "Settings, custom units, and menus save automatically; :resetconfig restores defaults.",
+    "F5 > Create backup config or :backupconfig: save a numbered config copy beside the original.",
 ]
 
 
@@ -1523,6 +1525,8 @@ class ConsoleApp:
                 menus[4]["items"].append(problem_menu())
             if not any(item.get("command") == ":colors toggle" for item in menus[4]["items"]):
                 menus[4]["items"].append(command_item("Syntax colors: On", ":colors toggle"))
+            if not any(item.get("command") == ":backupconfig" for item in menus[4]["items"]):
+                menus[4]["items"].append(command_item("Create backup config", ":backupconfig"))
             # Older settings included the built-in history action under Options.
             menus[4]["items"] = [item for item in menus[4]["items"] if item.get("command") != ":clear"]
             if not any(item.get("command") == ":catalog" for item in menus[5]["items"]):
@@ -1559,6 +1563,26 @@ class ConsoleApp:
         if announce:
             self.message = "Saved configuration to " + str(self.config_path)
         self.save_problems()
+
+    def backup_config(self):
+        if self._config_dirty or not self.config_path.exists():
+            self.save_config(announce=False)
+        try:
+            contents = self.config_path.read_bytes()
+            number = 1
+            while True:
+                backup = self.config_path.with_name(
+                    f"{self.config_path.stem}.backup{number}{self.config_path.suffix}")
+                try:
+                    # Exclusive creation also protects backups made by another instance.
+                    with backup.open("xb") as destination:
+                        destination.write(contents)
+                    break
+                except FileExistsError:
+                    number += 1
+        except OSError as exc:
+            raise CalcError(f"Cannot back up configuration: {exc}") from None
+        self.message = "Backed up configuration to " + str(backup)
 
     def reset_config(self):
         # Reset preferences and menus while retaining calculation data and custom units.
@@ -1768,6 +1792,8 @@ class ConsoleApp:
             self.message = "Updated F" + number + " menu."
         elif name == ":save":
             self.save_config()
+        elif name == ":backupconfig":
+            self.backup_config()
         else:
             raise CalcError("Unknown command. Use :help for commands.")
         if name in {":colors", ":mode", ":format", ":precision", ":recall", ":unit",

@@ -1458,7 +1458,7 @@ class ConsoleTests(unittest.TestCase):
         with patch("sys.stdout", new_callable=io.StringIO) as stdout, patch("shutil.get_terminal_size", return_value=(80, 24)):
             Terminal().render(self.app)
             output = stdout.getvalue()
-        self.assertIn("\x1b[38;2;184;134;11m3\x1b[0m \x1b[94m=\x1b[0m \x1b[7m3\x1b[0m", output)
+        self.assertIn("\x1b[38;2;184;134;11m3\x1b[0m \x1b[96m=\x1b[0m \x1b[7m3\x1b[0m", output)
         self.assertIn("history 1/30", output)
 
     def test_renderer_highlights_only_the_selected_expression(self):
@@ -1468,7 +1468,7 @@ class ConsoleTests(unittest.TestCase):
         with patch("sys.stdout", new_callable=io.StringIO) as stdout, patch("shutil.get_terminal_size", return_value=(80, 24)):
             Terminal().render(self.app)
             output = stdout.getvalue()
-        self.assertIn("\x1b[7m5+3\x1b[0m \x1b[94m=\x1b[0m \x1b[38;2;184;134;11m8\x1b[0m", output)
+        self.assertIn("\x1b[7m5+3\x1b[0m \x1b[96m=\x1b[0m \x1b[38;2;184;134;11m8\x1b[0m", output)
 
     def test_idle_resize_redraws_without_a_keypress(self):
         terminal = Terminal()
