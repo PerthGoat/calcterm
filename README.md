@@ -25,9 +25,9 @@ modern Windows console hosts support it. Use `--plain` in a basic terminal or pi
 redirected input/output selects plain mode automatically. Quit using `:quit`, Ctrl+C,
 or Ctrl+D. The interactive app restores the terminal when it exits.
 
-Expressions use terminal syntax colors: **dark amber numbers**, **cyan function names**,
+Expressions use terminal syntax colors: **dark amber numbers**, **blue function names**,
 **green units/physical constants**, **magenta built-in values** (such as `pi` and `ans`),
-and **blue operators/commands**. Colors appear as you type, including incomplete
+and **cyan operators/commands**. Colors appear as you type, including incomplete
 expressions, and in history, the equation editor, and table values. Selected text
 uses inverse highlighting for readability. Input, saved history, and plain/batch
 output remain ordinary text.
@@ -37,6 +37,24 @@ toggle them immediately. Text selection remains highlighted when colors are off.
 The preference saves automatically and is restored when the app reopens.
 The setting is shared across Problems. Commands `:colors on`, `:colors off`, and
 `:colors toggle` also work; JSON settings use `"syntax_colors": true` or `false`.
+
+## Source organization
+
+`calc_term.py` is the command-line entry point and keeps the existing calculator
+imports available. Implementation lives in the `calcterm` package:
+
+| File | Responsibility |
+| --- | --- |
+| `core.py` | Quantities, units, physical constants, and result formatting |
+| `engine.py` | Expression grammar, parser, and calculation sessions |
+| `syntax.py` | Expression highlighting and ANSI colors |
+| `menus.py` | Menus, catalog entries, validation, and keyboard help |
+| `storage.py` | Configuration, backups, history, and saved Problems |
+| `app.py` | UI state, editing, dialogs, and frame layout |
+| `terminal.py` | Windows/POSIX keyboard input and terminal rendering |
+
+Run the app using the same commands as before. Keep `calcterm/` beside
+`calc_term.py`; configuration and saved data still live beside the entry script.
 
 ## Keyboard
 

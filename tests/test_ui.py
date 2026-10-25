@@ -1542,10 +1542,10 @@ class ConsoleTests(unittest.TestCase):
 
     def test_live_shift_poll_uses_windows_state_and_does_not_guess_from_posix_shortcuts(self):
         terminal = Terminal()
-        with patch("os.name", "nt"), patch("calc_term.windows_shift_pressed", side_effect=[True, False]):
+        with patch("os.name", "nt"), patch("calcterm.terminal.windows_shift_pressed", side_effect=[True, False]):
             self.assertTrue(terminal.read_shift_state())
             self.assertFalse(terminal.read_shift_state())
-        with patch("os.name", "posix"), patch("calc_term.windows_shift_pressed") as native_state:
+        with patch("os.name", "posix"), patch("calcterm.terminal.windows_shift_pressed") as native_state:
             self.app.handle_key("SHIFT_RIGHT")
             self.assertFalse(terminal.read_shift_state())
             native_state.assert_not_called()
@@ -1584,7 +1584,7 @@ class ConsoleTests(unittest.TestCase):
                     keyboard = Mock()
                     keyboard.getwch.side_effect = ["\xe0", code]
                     with patch("os.name", "nt"), patch.dict("sys.modules", {"msvcrt": keyboard}), \
-                            patch("calc_term.windows_shift_pressed", return_value=shifted):
+                            patch("calcterm.terminal.windows_shift_pressed", return_value=shifted):
                         self.assertEqual(Terminal().read_key(), ("SHIFT_" if shifted else "") + arrow)
 
     def test_windows_shift_enter_is_distinct_from_enter(self):
@@ -1593,7 +1593,7 @@ class ConsoleTests(unittest.TestCase):
                 keyboard = Mock()
                 keyboard.getwch.return_value = "\r"
                 with patch("os.name", "nt"), patch.dict("sys.modules", {"msvcrt": keyboard}), \
-                        patch("calc_term.windows_shift_pressed", return_value=shifted):
+                        patch("calcterm.terminal.windows_shift_pressed", return_value=shifted):
                     self.assertEqual(Terminal().read_key(), "SHIFT_ENTER" if shifted else "ENTER")
 
     def test_posix_modified_enter_and_control_keys(self):
