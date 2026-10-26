@@ -47,6 +47,8 @@ imports available. Implementation lives in the `calcterm` package:
 | --- | --- |
 | `core.py` | Quantities, units, physical constants, and result formatting |
 | `engine.py` | Expression grammar, parser, and calculation sessions |
+| `forth.py` | Forth tokenizer, compiler, stack, and word dictionary |
+| `commands.py` | Application Forth words and colon-command compatibility |
 | `syntax.py` | Expression highlighting and ANSI colors |
 | `menus.py` | Menus, catalog entries, validation, and keyboard help |
 | `storage.py` | Configuration, backups, history, and saved Problems |
@@ -447,6 +449,81 @@ Custom units can use compound dimensions and previously defined units. Built-in
 names cannot be overwritten. Saved definitions store their evaluated scale so they
 do not depend on session variables. Custom offset temperature units are not supported.
 
+## Forth commands
+
+Colon commands now run through an embedded Forth interpreter. Existing commands
+such as `:unit smoot = 1.7018_m`, `:format approximate`, and `:menu 1 Favorites`
+keep their syntax. Define your own commands using
+[Forth colon definitions](https://forth-standard.org/standard/core/Colon):
+
+```forth
+: presentation "approximate" format 12 precision ;
+:presentation
+: square ( n -- n*n ) dup * ;
+:forth 5 square .
+```
+
+The first definition creates a reusable settings preset. `:presentation` runs it.
+The last line prints `25`. A space after the defining `:` distinguishes a new
+definition from an invocation. You can enter a definition across several input
+lines; finish it with `;`. `:abort` cancels a pending definition. Syntax errors
+also cancel it, and exiting with an unfinished definition reports an error.
+
+Use `:forth PROGRAM` to execute stack code without changing how ordinary math
+input is interpreted. Arguments come before words: `:forth "degree" mode`
+does the same thing as `:mode degree`. For user words, `:square 5` is a shortcut
+for `:forth 5 square`. Word names ignore case. `:words` (also **F6 Help → Forth
+words**) lists the available words; `:forth .s` displays the current stack.
+
+Application words consume the following arguments, from left to right:
+
+| Word | Input stack values |
+| --- | --- |
+| `mode`, `format`, `colors`, `recall` | A string, such as `"degree"`, `"exact"`, `"toggle"`, `"result"` |
+| `precision` | An integer |
+| `unit` | Unit name string, definition string: `"smoot" "1.7018_m" unit` |
+| `menu` | Menu number, label string: `1 "Favorites" menu` |
+| `menuadd` | Menu number, label string, action string: `1 "Preset" ":presentation" menuadd` |
+| `menuclear` | Menu number |
+| `problem` | Action string, name string: `"new" "Homework" problem`; `"open" "" problem` opens the picker |
+| `unset` | Variable name string |
+| `calc` | Calculator expression string; pushes its result as a string and records history |
+| `insert` | Text string to insert into the calculator input |
+
+`vars`, `clearvars`, `clear`, `resetconfig`, `save`, `backupconfig`, `help`,
+`catalog`, and `quit` consume no arguments. The same dictionary supplies these
+words to both traditional commands and user definitions. For example:
+
+```forth
+: setup 1 "Favorites" menu 1 "Preset" ":presentation" menuadd ;
+:setup
+:forth "3_in=>_ft" calc type
+```
+
+Definitions save automatically in the config's `forth_words` object and are
+shared between Problems. Saved definitions are compiled on startup without
+executing them. You can redefine your own words; built-in names are reserved.
+The stack lasts for the session. **Reset configuration** removes user definitions
+and clears the Forth stack; config backups include the definitions.
+
+This is a Forth subset with arbitrary-width decimal integers and strings. Core
+words include `dup drop swap over rot depth clearstack`, `+ - * / mod min max`,
+`negate abs 1+ 1-`, `= <> < > <= >= 0= 0<`, `and or xor invert true false`, and
+`. .s type cr`. Integer division truncates toward zero; true is `-1`, false is `0`.
+Control flow includes `if else then`, `begin until`, `begin again`,
+`begin while repeat`, `do loop`, `?do loop`, `i j leave`, and `exit recurse`.
+Use `?do` to skip a loop when start equals limit. Parenthesized stack comments
+and `\` line comments are supported. Strings can use `"text"` or `s" text"`;
+`." text"` prints directly. Unlike standard Forth's address/length representation,
+each string occupies one stack entry. Raw memory, variables, compiler extensions,
+and floating-point Forth words are outside this subset; `calc` provides the
+calculator's exact symbolic math and units.
+
+Programs are limited to 10,000 executed instructions per input, 64 nested calls,
+1,024 stack entries, and 1,048,576 output characters. Errors restore the input's starting stack. Application
+actions already completed before an error remain applied. Completed definitions
+remain saved; incomplete or invalid definitions never replace a valid word.
+
 ## Configure menus
 
 Change labels and items in the app; each change saves automatically:
@@ -509,7 +586,8 @@ Other commands are `:vars`, `:unset NAME`, `:clearvars` (all set variables), `:c
 `:format approximate`, `:precision DIGITS`, `:help`,
 and `:quit`.
 
-For scripting, `--eval` can be repeated; expressions share variables and return a
+For scripting, `--eval` can be repeated with math or colon commands; inputs share
+calculator variables and the Forth stack, and return a
 nonzero exit code on errors:
 
 ```powershell

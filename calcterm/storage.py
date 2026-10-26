@@ -189,6 +189,9 @@ class SessionStorage:
                 self.message = "Error: " + str(exc)
                 config_saved = False
         history_saved = self.save_history()
+        if self.forth.pending is not None:
+            self.message = "Error: Unfinished Forth definition; expected ';'."
+            return False
         return config_saved and history_saved
 
     def _load_history(self):
@@ -292,6 +295,9 @@ class SessionStorage:
             menus[4]["items"] = [item for item in menus[4]["items"] if item.get("command") != ":clear"]
             if not any(item.get("command") == ":catalog" for item in menus[5]["items"]):
                 menus[5]["items"].append(command_item("Catalog", ":catalog"))
+            if not any(item.get("command") == ":words" for item in menus[5]["items"]):
+                menus[5]["items"].append(command_item("Forth words", ":words"))
+            self.forth.load_definitions(data.get("forth_words", {}))
             self.calculator = calculator
             self.history_insert = recall
             self.menus = menus
@@ -313,7 +319,7 @@ class SessionStorage:
                 "unchecked_equations": sorted(self.calculator.unchecked_equations,
                                               key=EQUATION_NAMES.index),
                 "table": {"start": self.table_start, "step": self.table_step},
-                "menus": self.menus}
+                "menus": self.menus, "forth_words": self.forth.definitions}
         temporary = self.config_path.with_name(self.config_path.name + ".tmp")
         try:
             temporary.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")

@@ -141,6 +141,7 @@ def default_menus(registry):
          command_item("Create backup config", ":backupconfig"),
          command_item("Quit", ":quit")]},
         {"label": "Help", "items": [command_item("Keyboard help", ":help"), command_item("Catalog", ":catalog"),
+         command_item("Forth words", ":words"), insert_item("Define a Forth word", ": square dup * ;"),
          insert_item("Exact decimal example", "0.1 + 0.2"), insert_item("Conversion example", "3_in=>_ft"),
          insert_item("Assignment example", "3->x"), insert_item("Symbolic example", "expand((y+1)^2)"),
          insert_item("Derivative example", "diff(y^3,y)"), insert_item("Custom unit example", ":unit smoot = 1.7018_m")]},
@@ -213,4 +214,7 @@ HELP_LINES = [
     "Equations and Problems save automatically; F5 > Problems: new/open/delete.",
     "Settings, custom units, and menus save automatically; :resetconfig restores defaults.",
     "F5 > Create backup config or :backupconfig: save a numbered config copy beside the original.",
+    "Forth: : name ... ; defines a word; :name runs it; :forth runs a stack program.",
+    "Example: : preset \"approximate\" format 12 precision ; then :preset. Words save automatically.",
+    "Forth: :words lists words; :abort cancels a pending definition; :forth .s shows the stack.",
 ]

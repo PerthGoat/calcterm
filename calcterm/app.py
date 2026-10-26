@@ -7,10 +7,10 @@ from pathlib import Path
 import re
 import unicodedata
 
+from .commands import CommandProcessor
 from .core import CalcError, Quantity, ZERO, expression_text, sp
 from .engine import Calculator, EQUATION_NAMES, HistoryEntry
-from .menus import (HELP_LINES, catalog_items, categorize_unit_items, cleanup_menu,
-                    command_item, default_menus, filter_menu_items, insert_item)
+from .menus import HELP_LINES, catalog_items, cleanup_menu, default_menus, filter_menu_items
 from .storage import SessionStorage
 from .syntax import expression_highlights
 
@@ -82,6 +82,8 @@ class ConsoleApp(SessionStorage):
         self.message = "F7: equations | F8: table | F6: help | Enter: calculate | :quit: exit"
         self.help_open = False
         self.running = True
+        self.commands = CommandProcessor(self)
+        self.forth = self.commands.vm
         self._load_config()
         self._load_history()
         self._load_problems()
@@ -94,6 +96,8 @@ class ConsoleApp(SessionStorage):
         self.history_insert = "result"
         self.syntax_colors = True
         self.insert_mode = False
+        self.forth.load_definitions({})
+        self.forth.stack.clear()
         self.menus = default_menus(self.calculator.registry)
         self.open_menu = None
         self.menu_stack.clear()
@@ -206,111 +210,24 @@ class ConsoleApp(SessionStorage):
         _, self.menu_index, self.menu_filter = self.menu_stack.pop()
 
     def command(self, text):
-        # Colon commands change application state instead of entering the math parser.
-        name, _, arg = text.partition(" ")
-        arg = arg.strip()
-        if name == ":quit":
-            self.running = False
-        elif name == ":help":
-            self.help_open = True
-        elif name == ":catalog":
-            self.open_catalog()
-        elif name == ":colors":
-            arg = arg or "toggle"
-            if arg not in ("on", "off", "toggle"):
-                raise CalcError("Use :colors on, :colors off, or :colors toggle.")
-            self.syntax_colors = {"on": True, "off": False, "toggle": not self.syntax_colors}[arg]
-            self.refresh_color_option()
-            self.message = "Syntax colors: " + ("On" if self.syntax_colors else "Off")
-        elif name == ":problem":
-            action, _, problem_name = arg.partition(" ")
-            if action not in ("new", "open", "delete"):
-                raise CalcError("Use :problem new/open/delete [NAME].")
-            if problem_name and action in ("new", "open"):
-                (self.new_problem if action == "new" else self.open_problem)(problem_name)
-            else:
-                self.begin_problem_dialog(action, problem_name)
-        elif name == ":mode":
-            self.calculator.set_mode(arg)
-            self.message = "Angle mode: " + self.calculator.mode
-        elif name == ":format":
-            self.calculator.set_output_mode(arg)
-            self.message = "Output mode: " + self.calculator.output_mode
-        elif name == ":precision":
-            try:
-                self.calculator.set_precision(int(arg))
-            except ValueError as exc:
-                raise CalcError("Precision must be an integer of at least 2.") from exc
-            self.message = f"Approximation precision: {self.calculator.precision} digits; exact math is unchanged."
-        elif name == ":recall":
-            if arg not in ("result", "expression"):
-                raise CalcError("Use :recall result or :recall expression.")
-            self.history_insert = arg
-            self.message = "History browsing starts with the " + arg + "; Up/Down selects either part."
-        elif name == ":clear":
-            self.calculator.history.clear()
-            self.history_index = None
-            self.message = "History cleared."
-            self.save_history(force=True)
-        elif name == ":clearvars":
-            self.calculator.variables.clear()
-            self.message = "Set variables cleared."
-        elif name == ":resetconfig":
-            self.reset_config()
-        elif name == ":vars":
-            self.message = "; ".join(f"{k} = {self.calculator.format(v)}" for k, v in self.calculator.variables.items()) or "No assigned variables."
-        elif name == ":unset":
-            if arg not in self.calculator.variables:
-                raise CalcError("No assigned variable named " + arg)
-            del self.calculator.variables[arg]
-            self.message = arg + " is symbolic again."
-        elif name == ":unit":
-            unit_name, separator, expression = arg.partition("=")
-            if not separator:
-                raise CalcError("Use :unit name = expression, for example :unit smoot = 1.7018_m.")
-            unit_name = unit_name.strip().removeprefix("_")
-            self.calculator.define_unit(unit_name, expression.strip())
-            unit = self.calculator.registry.get(unit_name)
-            self.menus[1]["items"] = categorize_unit_items(self.calculator.registry,
-                self.menus[1]["items"] + [insert_item(unit.notation + " " + unit.label, unit.notation)])
-            self.message = "Added " + unit.notation
-        elif name in (":menu", ":menuadd", ":menuclear"):
-            number, _, rest = arg.partition(" ")
-            if number not in {"1", "2", "3", "4", "5", "6"}:
-                raise CalcError("Menu number must be 1 through 6.")
-            menu = self.menus[int(number) - 1]
-            if name == ":menu":
-                if not rest.strip():
-                    raise CalcError("Use :menu NUMBER LABEL.")
-                menu["label"] = rest.strip()
-            elif name == ":menuclear":
-                menu["items"] = []
-            else:
-                label, separator, action = rest.partition("|")
-                if not separator or not label.strip():
-                    raise CalcError("Use :menuadd NUMBER LABEL | TEXT (or a :command).")
-                action = action.strip()
-                menu["items"].append(command_item(label.strip(), action) if action.startswith(":") else insert_item(label.strip(), action))
-            self.message = "Updated F" + number + " menu."
-        elif name == ":save":
-            self.save_config()
-        elif name == ":backupconfig":
-            self.backup_config()
-        else:
-            raise CalcError("Unknown command. Use :help for commands.")
-        if name in {":colors", ":mode", ":format", ":precision", ":recall", ":unit",
-                    ":menu", ":menuadd", ":menuclear", ":resetconfig"}:
-            self._config_dirty = True
-            self.save_config(announce=False)
+        self.commands.execute(text)
+
+    def is_command_input(self, text):
+        return self.forth.pending is not None or text.lstrip().startswith(":")
 
     def submit(self, approximate=False):
         # Both interactive and plain mode share this command/calculation path.
         if not self.text.strip():
             return
         try:
-            if self.text.lstrip().startswith(":"):
-                self.command(self.text.strip())
+            if self.is_command_input(self.text):
+                command = self.text.strip()
                 self.clear_input()
+                try:
+                    self.command(command)
+                except (CalcError, OSError):
+                    self.text, self.cursor = command, len(command)
+                    raise
             else:
                 self.calculator.evaluate(self.text, approximate=approximate)
                 self.message = self.calculator.history[-1].line
@@ -321,7 +238,7 @@ class ConsoleApp(SessionStorage):
             # Keep failed input in the editor for correction and persist any error entry.
             self.message = "Error: " + str(exc)
             self.history_index = None
-            if self.text.lstrip().startswith(":"):
+            if self.is_command_input(self.text):
                 self.clear_input_selection()
             else:
                 self.select_all_input()

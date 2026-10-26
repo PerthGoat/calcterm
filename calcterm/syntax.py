@@ -32,7 +32,7 @@ def expression_highlights(text) -> list[tuple[int, int, str]]:
                 continue
         if kind is not None and kind in SYNTAX_COLORS:
             spans.append((match.start(), match.end(), kind))
-    command = re.match(r"\s*(:[a-z]+)", text)
+    command = re.match(r"\s*(:[^\s:;]+)", text)
     if command:
         spans.append((*command.span(1), "command"))
     return spans

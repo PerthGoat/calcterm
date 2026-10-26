@@ -13,6 +13,7 @@ from calcterm.core import (BASE_NAMES, BITWISE, COMPARISONS, ZERO, CalcError, Qu
 from calcterm.engine import (BASE_LITERAL, BASES, DIGITS, EQUATION_NAMES, FUNCTIONS,
                              RESERVED, TOKEN, TRANSLATE, Calculator, HistoryEntry,
                              Parser, decimal_literals, normalize_input)
+from calcterm.forth import ForthInterpreter
 from calcterm.menus import (HELP_LINES, SYMBOLS, catalog_items, categorize_unit_items,
                             cleanup_menu, command_item, default_menus, filter_menu_items,
                             insert_item, output_options, problem_menu, validate_menus)
@@ -38,8 +39,12 @@ def main(argv=None):
         status = 0
         for text in options.expressions:
             try:
-                print(text + " = " + app.calculator.calculate(text))
-                app.message = app.calculator.history[-1].line
+                if app.is_command_input(text):
+                    app.command(text)
+                    print(app.message)
+                else:
+                    print(text + " = " + app.calculator.calculate(text))
+                    app.message = app.calculator.history[-1].line
                 if not app.save_history():
                     print(app.message, file=sys.stderr)
                     status = 1
@@ -48,6 +53,9 @@ def main(argv=None):
                 status = 1
                 if not app.save_history():
                     print(app.message, file=sys.stderr)
+        if app.forth.pending is not None:
+            print("Error: Unfinished Forth definition; expected ';'.", file=sys.stderr)
+            status = 1
         return status
     if options.plain or not (sys.stdin.isatty() and sys.stdout.isatty()):
         # Pipes and basic terminals use complete input lines instead of raw key handling.

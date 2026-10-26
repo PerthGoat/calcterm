@@ -140,11 +140,13 @@ class CatalogTests(unittest.TestCase):
         restored = ConsoleApp(config_path=self.config)
         self.assertEqual(restored.menus[5]["label"], "Custom Help")
         self.assertEqual(restored.menus[5]["items"][0], {"label": "Keyboard", "command": ":help"})
-        self.assertEqual(restored.menus[5]["items"][-1], {"label": "Catalog", "command": ":catalog"})
+        self.assertIn({"label": "Catalog", "command": ":catalog"}, restored.menus[5]["items"])
+        self.assertIn({"label": "Forth words", "command": ":words"}, restored.menus[5]["items"])
         self.assertEqual(self.config.read_text(encoding="utf-8"), document)
         restored.save_config()
         reopened = ConsoleApp(config_path=self.config)
         self.assertEqual(sum(item.get("command") == ":catalog" for item in reopened.menus[5]["items"]), 1)
+        self.assertEqual(sum(item.get("command") == ":words" for item in reopened.menus[5]["items"]), 1)
 
 
 if __name__ == "__main__":
