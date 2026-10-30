@@ -15,7 +15,7 @@ from .syntax import colorize_line
 # Map Windows extended keys and POSIX escape sequences to shared UI key names.
 WINDOWS_KEYS = {"H": "UP", "P": "DOWN", "K": "LEFT", "M": "RIGHT", "G": "HOME", "O": "END", "R": "INSERT",
                 "I": "PAGEUP", "Q": "PAGEDOWN", "S": "DELETE", ";": "F1", "<": "F2", "=": "F3",
-                ">": "F4", "?": "F5", "@": "F6", "A": "F7", "B": "F8", "C": "F9", "D": "F10"}
+                ">": "F4", "?": "F5", "@": "F6", "A": "F7", "B": "F8", "C": "F9", "D": "F10", "Z": "SHIFT_F7"}
 ANSI_KEYS = {"\x1b[A": "UP", "\x1b[B": "DOWN", "\x1b[C": "RIGHT", "\x1b[D": "LEFT",
              "\x1b[2~": "INSERT",
              "\x1b[1;2D": "SHIFT_LEFT", "\x1b[1;2C": "SHIFT_RIGHT",
@@ -25,6 +25,7 @@ ANSI_KEYS = {"\x1b[A": "UP", "\x1b[B": "DOWN", "\x1b[C": "RIGHT", "\x1b[D": "LEF
              "\x1bOS": "F4", "\x1b[11~": "F1", "\x1b[12~": "F2", "\x1b[13~": "F3",
              "\x1b[14~": "F4", "\x1b[15~": "F5", "\x1b[17~": "F6", "\x1b[18~": "F7", "\x1b[19~": "F8", "\x1b[20~": "F9",
              "\x1b[21~": "F10",
+             "\x1b[18;2~": "SHIFT_F7",
              "\x1bOH": "HOME", "\x1bOF": "END"}
 CONTROL_KEYS = {"\r": "ENTER", "\n": "ENTER", "\x1b": "ESC", "\t": "TAB", "\x08": "BACKSPACE",
                 "\x7f": "BACKSPACE", "\x03": "CTRL_C", "\x04": "CTRL_D", "\x15": "CTRL_U", "\x0c": "CTRL_L",
@@ -132,7 +133,7 @@ class Terminal:
             if char in ("\x00", "\xe0"):
                 # Windows extended keys arrive as a prefix followed by a key code.
                 key = WINDOWS_KEYS.get(msvcrt.getwch(), "UNKNOWN")
-                if key in ("LEFT", "RIGHT") and windows_shift_pressed():
+                if key in ("LEFT", "RIGHT", "F7") and windows_shift_pressed():
                     return "SHIFT_" + key
                 return key
             if 0xd800 <= ord(char) <= 0xdbff:

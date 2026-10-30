@@ -7,6 +7,7 @@ import json
 
 from .core import CalcError
 from .engine import Calculator, EQUATION_NAMES, HistoryEntry
+from .graph import validate_graph_settings
 from .menus import (categorize_unit_items, command_item, default_menus,
                     output_options, problem_menu, validate_menus)
 
@@ -34,6 +35,7 @@ class SessionStorage:
         return {"equations": dict(self.calculator.equations),
                 "unchecked_equations": sorted(self.calculator.unchecked_equations, key=EQUATION_NAMES.index),
                 "table": {"start": self.table_start, "step": self.table_step},
+                "graph": dict(self.graph.settings),
                 "history": [{"source": entry.source, "result": entry.result,
                              **({"is_error": True} if entry.is_error else {})}
                             for entry in self.calculator.history]}
@@ -68,7 +70,8 @@ class SessionStorage:
         if not isinstance(table, dict):
             raise CalcError("Problem table must be an object.")
         start, step = self.validate_table_settings(calculator, table.get("start", "0"), table.get("step", "1"))
-        return calculator, start, step
+        graph = validate_graph_settings(calculator, data.get("graph", {}))
+        return calculator, start, step, graph
 
     @staticmethod
     def problems_document(problems, active):
@@ -127,7 +130,7 @@ class SessionStorage:
         return True
 
     def _apply_problem(self, name, prepared):
-        self.calculator, self.table_start, self.table_step = prepared
+        self.calculator, self.table_start, self.table_step, self.graph.settings = prepared
         self.problem_name = name
         self._saved_history = tuple(self.calculator.history)
         self.clear_input()
@@ -136,6 +139,8 @@ class SessionStorage:
         self.catalog_open = False
         self.equation_index, self.table_row, self.table_column = 0, 0, 0
         self.table_edit_field = None
+        self.graph_open = False
+        self.graph.edit_field = None
         self.open_menu = None
         self.menu_stack.clear()
 
@@ -181,6 +186,8 @@ class SessionStorage:
             self.commit_equation()
         if self.table_edit_field is not None:
             self.commit_table_settings()
+        if self.graph.edit_field is not None:
+            self.commit_graph_settings()
         config_saved = True
         if self._config_dirty:
             try:
@@ -278,6 +285,7 @@ class SessionStorage:
             if not isinstance(table, dict):
                 raise CalcError("table must be an object with start and step expressions.")
             start, step = self.validate_table_settings(calculator, table.get("start", "0"), table.get("step", "1"))
+            graph = validate_graph_settings(calculator, data.get("graph", {}))
             menus = validate_menus(data["menus"]) if "menus" in data else default_menus(calculator.registry)
             if "menus" in data and not any("items" in item for item in menus[1]["items"]):
                 menus[1]["items"] = categorize_unit_items(calculator.registry, menus[1]["items"])
@@ -304,6 +312,7 @@ class SessionStorage:
             self.syntax_colors = syntax_colors
             self.refresh_color_option()
             self.table_start, self.table_step = start, step
+            self.graph.settings = graph
         except (OSError, ValueError, TypeError) as exc:
             # Invalid files never partially replace the live state.
             self.message = f"Config error: {exc} (using defaults; original file preserved)"
@@ -319,6 +328,7 @@ class SessionStorage:
                 "unchecked_equations": sorted(self.calculator.unchecked_equations,
                                               key=EQUATION_NAMES.index),
                 "table": {"start": self.table_start, "step": self.table_step},
+                "graph": dict(self.graph.settings),
                 "menus": self.menus, "forth_words": self.forth.definitions}
         temporary = self.config_path.with_name(self.config_path.name + ".tmp")
         try:

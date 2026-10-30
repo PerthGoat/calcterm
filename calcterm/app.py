@@ -10,6 +10,7 @@ import unicodedata
 from .commands import CommandProcessor
 from .core import CalcError, Quantity, ZERO, expression_text, sp
 from .engine import Calculator, EQUATION_NAMES, HistoryEntry
+from .graph import GRAPH_COLORS, GRAPH_MARKERS, GraphView
 from .io import IOTranscript
 from .menus import HELP_LINES, catalog_items, cleanup_menu, default_menus, filter_menu_items
 from .storage import SessionStorage
@@ -71,6 +72,8 @@ class ConsoleApp(SessionStorage):
         self.equation_text = ""
         self.equation_cursor = 0
         self.table_open = False
+        self.graph_open = False
+        self.graph = GraphView()
         self.io_open = False
         self.io = IOTranscript()
         self.io_focus_input = True
@@ -284,12 +287,27 @@ class ConsoleApp(SessionStorage):
         if self.catalog_open:
             self.handle_catalog_key(key)
             return
+        if (self.graph.edit_field is not None and key in
+                ({f"F{number}" for number in range(1, 11)} | {"SHIFT_F7"}) and not self.commit_graph_settings()):
+            return
+        if key == "SHIFT_F7":
+            if self.equation_open and not self.commit_equation():
+                return
+            if self.table_edit_field is not None and not self.commit_table_settings():
+                return
+            self.equation_open = self.table_open = self.io_open = self.help_open = False
+            self.open_menu = None
+            self.menu_stack.clear()
+            self.graph_open = not self.graph_open
+            self.message = "Graph | Tab: bounds | Left/Right: legend | Shift+F7/Esc: close"
+            return
         if key == "F10":
             if self.equation_open and not self.commit_equation():
                 return
             if self.table_edit_field is not None and not self.commit_table_settings():
                 return
             self.equation_open = self.table_open = self.help_open = False
+            self.graph_open = False
             self.open_menu = None
             self.menu_stack.clear()
             self.io_open = not self.io_open
@@ -303,6 +321,7 @@ class ConsoleApp(SessionStorage):
             if self.table_edit_field is not None and not self.commit_table_settings():
                 return
             self.equation_open = False
+            self.graph_open = False
             self.io_open = False
             self.open_menu = None
             self.menu_stack.clear()
@@ -314,6 +333,7 @@ class ConsoleApp(SessionStorage):
             if self.table_edit_field is not None and not self.commit_table_settings():
                 return
             self.table_open = False
+            self.graph_open = False
             self.io_open = False
             if self.equation_open:
                 if self.commit_equation():
@@ -329,6 +349,7 @@ class ConsoleApp(SessionStorage):
             if self.table_edit_field is not None and not self.commit_table_settings():
                 return
             self.table_open = False
+            self.graph_open = False
             self.io_open = False
             if self.equation_open:
                 if not self.commit_equation():
@@ -346,6 +367,9 @@ class ConsoleApp(SessionStorage):
             return
         if self.table_open:
             self.handle_table_key(key)
+            return
+        if self.graph_open:
+            self.handle_graph_key(key)
             return
         if self.io_open and not self.help_open:
             if key == "ESC":
@@ -742,10 +766,83 @@ class ConsoleApp(SessionStorage):
         lines[-2] = self.status_with_indicators(lines[-2], width)
         return [clip(line, width) for line in lines], selected, cursor
 
+    def commit_graph_settings(self):
+        try:
+            self.graph.apply(self.calculator)
+        except CalcError as exc:
+            self.message = "Error: " + str(exc)
+            return False
+        self.message = "Graph bounds saved automatically | Tab: edit bounds"
+        return self.save_problems()
+
+    def handle_graph_key(self, key):
+        if self.graph.edit_field is not None:
+            if key == "ENTER":
+                self.commit_graph_settings()
+            else:
+                self.graph.edit(key, overwrite=self.insert_mode)
+            return
+        if key == "ESC":
+            self.graph_open = False
+        elif key == "TAB":
+            self.graph.begin_edit()
+            self.message = "Tab/Up/Down: field | Y mode: Space | Enter: save | Esc: cancel | Ctrl+U: clear"
+        elif key in ("LEFT", "RIGHT"):
+            self.graph.legend_offset = max(0, min(max(0, len(self.table_equation_names()) - 1),
+                                                  self.graph.legend_offset + (-1 if key == "LEFT" else 1)))
+
+    def graph_frame(self, width, height, menu_title):
+        names = self.table_equation_names()
+        plot = self.graph.plot(self.calculator, names, width - 12, height - 9)
+        number = lambda value: f"{value:.4g}"
+        lines = [menu_title,
+                 f"Graph | X=[{number(plot.x_min)}, {number(plot.x_max)}] | "
+                 f"Y={self.graph.settings['y_mode']} [{number(plot.y_min)}, {number(plot.y_max)}]"]
+        self.graph.legend_offset = min(self.graph.legend_offset, max(0, len(names) - 1))
+        legends = [f"{GRAPH_MARKERS[index % len(GRAPH_MARKERS)]}:{name}"
+                   for index, name in enumerate(names) if index >= self.graph.legend_offset]
+        lines.append(" ".join(legends) if names else "Check equations in F7 (Ctrl+T) to graph them.")
+        border = " " * 10 + "+" + "-" * (width - 12) + "+"
+        lines.append(border)
+        for row, cells in enumerate(plot.cells):
+            label = f"{plot.y_max:.3g}" if row == 0 else f"{plot.y_min:.3g}" if row == len(plot.cells) - 1 else ""
+            lines.append(f"{label:>10}|" + "".join(cells) + "|")
+        lines.append(border)
+        lower, upper = number(plot.x_min), number(plot.x_max)
+        lines.append(" " * 11 + lower + " " * max(1, width - 12 - len(lower) - len(upper)) + upper)
+        if self.syntax_colors:
+            for (row, column), color in plot.colors.items():
+                self.syntax_highlights.setdefault(row + 4, []).append((column + 11, column + 12, f"graph{color}"))
+            for index, name in enumerate(names):
+                marker = f"{GRAPH_MARKERS[index % len(GRAPH_MARKERS)]}:{name}"
+                position = lines[2].find(marker)
+                if position >= 0:
+                    self.syntax_highlights.setdefault(2, []).append((position, position + len(marker), f"graph{index % len(GRAPH_COLORS)}"))
+        cursor, selected = None, {}
+        field = self.graph.edit_field
+        if field is None:
+            lines.append("Tab: bounds | Left/Right: legend | F7: equations | Shift+F7/Esc: close")
+        else:
+            labels = ["X lower", "X upper", "Y mode (Space: auto/manual)", "Y lower", "Y upper"]
+            prefix, text = labels[field] + "=", self.graph.fields[field]
+            available = max(2, width - len(prefix) - 1)
+            first = self.edit_window_start(text, self.graph.cursor, available)
+            lines.append(prefix + text[first:])
+            if field == 2:
+                selected[len(lines) - 1] = (len(prefix), len(prefix) + len(text))
+            else:
+                cursor = (len(lines), len(prefix) + display_width(text[first:self.graph.cursor]) + 1)
+        status = ("No finite real samples: " + ", ".join(plot.invalid) if plot.invalid else
+                  f"{len(names)} enabled equations | Tab: bounds | *: curves overlap")
+        lines.extend([self.status_with_indicators(status, width), self.message])
+        return [clip(line, width) for line in lines], selected, cursor
+
     def open_catalog(self):
         if self.equation_open and not self.commit_equation():
             return
         if self.table_edit_field is not None and not self.commit_table_settings():
+            return
+        if self.graph.edit_field is not None and not self.commit_graph_settings():
             return
         self.catalog_entries = catalog_items(self.calculator, self.menus)
         self.catalog_filter, self.catalog_index = "", 0
@@ -753,6 +850,7 @@ class ConsoleApp(SessionStorage):
         self.open_menu = None
         self.menu_stack.clear()
         self.equation_open, self.table_open, self.help_open = False, False, False
+        self.graph_open = False
         self.message = "Catalog | Type: filter | Up/Down or PageUp/PageDown: scroll | Enter: insert | Esc: close"
 
     def catalog_matches(self) -> list[dict[str, str]]:
@@ -827,6 +925,7 @@ class ConsoleApp(SessionStorage):
         self.open_menu = None
         self.menu_stack.clear()
         self.equation_open, self.table_open, self.help_open = False, False, False
+        self.graph_open = False
         self.catalog_open = False
         self.message = "Enter: choose | Esc: cancel"
 
@@ -978,21 +1077,32 @@ class ConsoleApp(SessionStorage):
         if width < 40 or height < 12:
             lines = ["Please resize the terminal to at least 40 columns and 12 rows.", self.message]
             return [clip(line, width) for line in lines[:height]], {}, None
-        fixed_titles = ["F7 Equations", "F8 Table", "F9 Clean Up", "F10 IO"]
+        fixed_titles = ["F7 Equations", "F8 Table", "F9 Clean Up", "F10 IO", "Shift+F7 Graph"]
         prefixes = [f"F{i + 1} " for i in range(len(self.menus))]
-        fixed_width = display_width("  ".join(fixed_titles)) + sum(map(display_width, prefixes)) + 2 * len(prefixes)
+        menu_separator = "  "
+        fixed_width = display_width(" ".join(fixed_titles)) + sum(map(display_width, prefixes)) + len(prefixes)
         label_width = max(1, (width - fixed_width) // len(prefixes))
         menu_titles = [prefix + menu["label"] for prefix, menu in zip(prefixes, self.menus)] + fixed_titles
         if display_width("  ".join(menu_titles)) > width:
-            menu_titles = [prefix + clip(menu["label"], label_width)
-                           for prefix, menu in zip(prefixes, self.menus)] + fixed_titles
-        if display_width("  ".join(menu_titles)) > width:
-            menu_titles = [f"F{i}" for i in range(1, 11)]
+            menu_separator = " "
+            lengths = [display_width(menu["label"]) for menu in self.menus]
+            limits = [min(length, label_width) for length in lengths]
+            spare = max(0, width - fixed_width - sum(limits))
+            for index in sorted(range(len(limits)), key=lambda index: lengths[index]):
+                extra = min(spare, lengths[index] - limits[index])
+                limits[index] += extra
+                spare -= extra
+            menu_titles = [prefix + clip(menu["label"], limit)
+                           for prefix, menu, limit in zip(prefixes, self.menus, limits)] + fixed_titles
+        if display_width(menu_separator.join(menu_titles)) > width:
+            menu_titles = [f"F{i}" for i in range(1, 11)] + ["S+F7"]
         if self.equation_open:
-            return self.equation_frame(width, height, "  ".join(menu_titles))
+            return self.equation_frame(width, height, menu_separator.join(menu_titles))
         if self.table_open:
-            return self.table_frame(width, height, "  ".join(menu_titles))
-        lines = ["  ".join(menu_titles), "-" * width]
+            return self.table_frame(width, height, menu_separator.join(menu_titles))
+        if self.graph_open:
+            return self.graph_frame(width, height, menu_separator.join(menu_titles))
+        lines = [menu_separator.join(menu_titles), "-" * width]
         selected: dict[int, tuple[int, int]] = {}
         # Choose a visible history window that follows either the newest result
         # or the older entry currently selected with the navigation keys.
@@ -1107,7 +1217,7 @@ class ConsoleApp(SessionStorage):
             levels = [root] + [item for item, _, _ in self.menu_stack]
             indices = [parent_index for _, parent_index, _ in self.menu_stack] + [self.menu_index]
             filters = [parent_filter for _, _, parent_filter in self.menu_stack] + [self.menu_filter]
-            anchor = sum(display_width(t) + 2 for t in menu_titles[:self.open_menu])
+            anchor = sum(display_width(t) + len(menu_separator) for t in menu_titles[:self.open_menu])
             top, previous_width, previous_first = 1, 0, 0
             selected = {}
             for depth, (menu, menu_index, menu_filter) in enumerate(zip(levels, indices, filters)):

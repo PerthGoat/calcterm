@@ -1574,7 +1574,8 @@ class ConsoleTests(unittest.TestCase):
             with self.subTest(expected=expected):
                 keyboard = Mock()
                 keyboard.getwch.side_effect = code
-                with patch("os.name", "nt"), patch.dict("sys.modules", {"msvcrt": keyboard}):
+                with patch("os.name", "nt"), patch.dict("sys.modules", {"msvcrt": keyboard}), \
+                        patch("calcterm.terminal.windows_shift_pressed", return_value=False):
                     self.assertEqual(Terminal().read_key(), expected)
 
     def test_windows_arrows_distinguish_shift_selection_from_plain_movement(self):

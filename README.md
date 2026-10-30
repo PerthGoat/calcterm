@@ -47,6 +47,7 @@ imports available. Implementation lives in the `calcterm` package:
 | --- | --- |
 | `core.py` | Quantities, units, physical constants, and result formatting |
 | `engine.py` | Expression grammar, parser, and calculation sessions |
+| `graph.py` | Graph window validation, sampling, and terminal plots |
 | `forth.py` | Forth tokenizer, compiler, stack, and word dictionary |
 | `commands.py` | Application Forth words and colon-command compatibility |
 | `io.py` | Session IO transcript, wrapping, and scrollback |
@@ -68,7 +69,8 @@ Run the app using the same commands as before. Keep `calcterm/` beside
 | F8 | Open/close the table of checked equations |
 | F9 | Open/close Clean Up: clear variables/history or reset configuration |
 | F10 | Open/close IO: scrollable multiline command input and output |
-| Ctrl+T in F7 | Check/uncheck the selected equation for the table |
+| Shift+F7 | Open/close Graph for checked equations; Tab edits axis bounds |
+| Ctrl+T in F7 | Check/uncheck the selected equation for the table and graph |
 | Up / Down | Select history results and expressions while preserving the input cursor |
 | Enter with history selected | Insert the highlighted part at the input cursor |
 | Backspace with history selected | Delete the whole selected history entry |
@@ -286,6 +288,39 @@ and pending input. Unchecked equations can still be called normally in calculati
 
 Table settings and equation checkmarks save automatically in the current Problem.
 Older settings default to checking all defined equations.
+
+## Graph
+
+Press **Shift+F7 Graph** to plot the equations checked in **F7** inside the terminal.
+Use **Ctrl+T** in the equation editor to include or exclude a formula. Each curve
+has a colored marker and a legend such as `1:y1 2:y2`; `*` marks overlapping curves.
+**Left/Right** scrolls the legend when many equations are enabled. The plot samples
+the current terminal columns and fits its rows; resizing redraws the graph.
+
+Press **Tab** to edit the graph window:
+
+- **X lower / X upper** set the horizontal range (default `-10` to `10`).
+- **Y mode** switches between **auto** and **manual** with Space or Left/Right.
+- In **auto**, the vertical range fits the finite sampled values of all enabled
+  equations over the selected x range, with a small margin.
+- In **manual**, **Y lower / Y upper** become editable to set a fixed vertical range.
+
+Tab or Up/Down moves between enabled fields. Ctrl+U clears a numeric field;
+Left/Right, Home/End, Backspace, and Delete edit it. **Enter** validates and saves
+the window. Bounds accept finite, real, dimensionless expressions such as `-2*pi`
+and `1/3`; lower bounds must be strictly less than upper bounds. **Esc** cancels
+pending edits; Esc again or Shift+F7 returns to the calculator. F7 returns to equations.
+
+The x range, y mode, and manual y bounds save automatically **with each Problem**
+and restore after closing and reopening the program. Switching to auto keeps the
+last saved manual bounds for later. Valid pending edits also save on normal exit;
+invalid edits leave the last saved window intact. Older saved Problems use the
+default window with automatic y scaling.
+
+Graphs show finite real, dimensionless results. Undefined/non-real samples leave
+gaps, and out-of-range values are clipped in manual mode. Graphs are sampled
+approximations, so features smaller than terminal cells may be missed. Plotting
+preserves calculator history, variables, `ans`, and the input buffer.
 
 ## Math
 
