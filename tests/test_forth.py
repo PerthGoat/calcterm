@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from calc_term import CalcError, ConsoleApp, ForthInterpreter, main
+from calc_term import CalcError, ConsoleApp, ForthInterpreter, display_width, main
 
 
 class ForthTests(unittest.TestCase):
@@ -201,6 +201,56 @@ class ForthAppTests(unittest.TestCase):
         self.assertIn("Forth stack: <1> 25", output.getvalue())
         self.assertIn("2+3 = 5", output.getvalue())
         self.assertIn("square", ConsoleApp(config_path=self.path).forth.definitions)
+
+    def test_def_displays_saved_word_without_execution_or_changes(self):
+        self.app.command(": square ( n -- n*n ) dup * ;")
+        self.app.command(': dangerous "degree" mode quit ;')
+        self.app.command(":forth 7")
+        before = self.path.read_bytes()
+        for name, expected in (("square", ": square dup * ;"),
+                               ("SQUARE", ": square dup * ;"),
+                               ("dangerous", ': dangerous "degree" mode quit ;')):
+            with self.subTest(name=name):
+                self.app.command(":def " + name)
+                self.assertEqual(self.app.message, expected)
+                self.assertEqual(self.app.io.entries[-1], expected)
+                self.assertEqual(self.app.forth.stack, [7])
+                self.assertEqual(self.app.calculator.mode, "radian")
+                self.assertTrue(self.app.running)
+                self.assertEqual(self.path.read_bytes(), before)
+        restored = ConsoleApp(config_path=self.path)
+        restored.command(':forth "square" def')
+        self.assertEqual(restored.message, ": square dup * ;")
+        restored.command(": square dup * 1+ ;")
+        restored.command(":def square")
+        self.assertEqual(restored.message, ": square dup * 1+ ;")
+
+    def test_def_handles_builtins_missing_names_and_unknown_words(self):
+        self.app.command(":forth 42")
+        for name in ("dup", "format", "def"):
+            with self.subTest(name=name):
+                self.app.command(":def " + name)
+                self.assertIn("built-in Forth word (native implementation)", self.app.message)
+        self.app.command(":def if")
+        self.assertIn("built-in Forth compiler word", self.app.message)
+        for command in (":def", ":def square extra", ":def missing-word"):
+            with self.subTest(command=command), self.assertRaises(CalcError):
+                self.app.command(command)
+            self.assertEqual(self.app.forth.stack, [42])
+
+    def test_def_plain_output_and_long_definitions_in_io(self):
+        body = " ".join(["dup drop"] * 50)
+        self.app.command(": long-word " + body + " ;")
+        with patch("sys.stdin", io.StringIO(":def long-word\n:quit\n")), \
+                patch("sys.stdout", new_callable=io.StringIO) as output:
+            self.assertEqual(main(["--config", str(self.path), "--plain"]), 0)
+        expected = ": long-word " + body + " ;"
+        self.assertIn(expected, output.getvalue())
+        self.app.command(":def long-word")
+        self.app.handle_key("F10")
+        self.app.frame(40, 12)
+        rows = (len(expected) + 39) // 40
+        self.assertEqual("".join(self.app.io.wrapped_lines(40, display_width)[-rows:]), expected)
 
     def test_unfinished_batch_and_plain_definitions_report_errors(self):
         for plain in (False, True):

@@ -496,6 +496,12 @@ does the same thing as `:mode degree`. For user words, `:square 5` is a shortcut
 for `:forth 5 square`. Word names ignore case. `:words` (also **F6 Help → Forth
 words**) lists the available words; `:forth .s` displays the current stack.
 
+Use `:def square` to inspect a word without executing it. For the example above,
+it displays `: square dup * ;`. Names ignore case, and long definitions are
+available in **F10 IO**. This shows the stored definition, with spacing normalized
+and comments omitted. Built-in words such as `dup` and `format` are identified as
+native implementations. The Forth equivalent is `:forth "square" def`.
+
 Application words consume the following arguments, from left to right:
 
 | Word | Input stack values |

@@ -219,4 +219,5 @@ HELP_LINES = [
     "Forth: : name ... ; defines a word; :name runs it; :forth runs a stack program.",
     "Example: : preset \"approximate\" format 12 precision ; then :preset. Words save automatically.",
     "Forth: :words lists words; :abort cancels a pending definition; :forth .s shows the stack.",
+    "Forth: :def square displays a word's saved definition; F10 shows long definitions in full.",
 ]

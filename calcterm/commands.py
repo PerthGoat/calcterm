@@ -90,6 +90,7 @@ class CommandProcessor:
         self._register("catalog", lambda vm: app.open_catalog())
         self.vm.register("calc", self._calc)
         self.vm.register("insert", lambda vm: app.insert(vm.string()))
+        self.adapters["def"] = lambda arg: [arg]
 
     def _mode(self, vm):
         self.app.calculator.set_mode(vm.string())

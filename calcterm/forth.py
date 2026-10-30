@@ -153,6 +153,20 @@ class ForthInterpreter:
         self.register("i", lambda vm: vm._index(0))
         self.register("j", lambda vm: vm._index(1))
         self.register("words", lambda vm: vm._emit(" ".join(sorted(vm.words.keys() | vm.programs.keys()))))
+        self.register("def", lambda vm: vm._emit(vm.definition(vm.string())))
+
+    def definition(self, name):
+        name = name.strip().lower()
+        if not name or any(char.isspace() for char in name):
+            raise CalcError("Use :def WORD to view a word definition.")
+        if name in self.definitions:
+            body = self.definitions[name]
+            return f": {name}" + (" " + body if body else "") + " ;"
+        if name in self.words:
+            return f"{name} is a built-in Forth word (native implementation)."
+        if name in self.control_words:
+            return f"{name} is a built-in Forth compiler word."
+        raise CalcError(f"Unknown Forth word: {name}")
 
     def _emit(self, text):
         self._output_size += len(text)
