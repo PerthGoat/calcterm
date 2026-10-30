@@ -1512,11 +1512,13 @@ class ConsoleTests(unittest.TestCase):
     def test_bare_shift_press_and_release_redraw_without_input_and_do_not_stick(self):
         terminal = Terminal()
         statuses = []
+        titles = []
         frame = self.app.frame
 
         def capture(width, height):
             result = frame(width, height)
             statuses.append(result[0][-2])
+            titles.append(result[0][0])
             return result
 
         with patch("sys.stdout", new_callable=io.StringIO), \
@@ -1526,9 +1528,30 @@ class ConsoleTests(unittest.TestCase):
                 patch.object(self.app, "frame", side_effect=capture):
             terminal.run(self.app)
         self.assertEqual([status.split(" | ")[1] for status in statuses], [" ", "↑", " "])
+        self.assertIn("F7 Equations", titles[0])
+        self.assertIn("F7 Graph", titles[1])
+        self.assertEqual(titles[0], titles[2])
         self.assertFalse(self.app.shift_pressed)
         self.assertEqual(self.app.text, "")
         self.assertFalse(self.app.calculator.history)
+
+    def test_shift_swaps_function_labels_in_every_view_and_at_narrow_widths(self):
+        for shortcut in (None, "F7", "F8", "SHIFT_F7", "F10"):
+            if shortcut is not None:
+                self.app.handle_key(shortcut)
+            for width in (40, 80, 100):
+                with self.subTest(view=shortcut, width=width):
+                    self.app.shift_pressed = False
+                    normal = self.app.frame(width, 24)[0][0]
+                    self.assertIn("F7 Equations", normal)
+                    self.assertNotIn("Shift+F7 Graph", normal)
+                    self.app.shift_pressed = True
+                    shifted = self.app.frame(width, 24)[0][0]
+                    self.assertIn("F7 Graph", shifted)
+                    self.assertNotIn("F7 Equations", shifted)
+                    self.assertLessEqual(display_width(shifted), width)
+                    self.app.shift_pressed = False
+                    self.assertEqual(self.app.frame(width, 24)[0][0], normal)
 
     def test_shift_already_held_is_shown_on_the_first_frame(self):
         terminal = Terminal()

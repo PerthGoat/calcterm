@@ -119,7 +119,7 @@ class GraphAppTests(unittest.TestCase):
         history, answer = list(self.app.calculator.history), self.app.calculator.answer
         self.app.handle_key("SHIFT_F7")
         lines, selected, cursor = self.app.frame(100, 24)
-        self.assertIn("Shift+F7 Graph", lines[0])
+        self.assertIn("F7 Equations", lines[0])
         self.assertEqual(lines[2], "1:y1")
         self.assertFalse(selected)
         self.assertIsNone(cursor)

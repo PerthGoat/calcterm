@@ -87,6 +87,11 @@ Run the app using the same commands as before. Keep `calcterm/` beside
 | Ctrl+U | Clear the input |
 | Ctrl+L | Redraw |
 
+Hold **Shift** to show alternate F-key labels: **F7 Equations** changes to
+**F7 Graph**, then returns to Equations on release. Keys with no alternate action
+keep their usual label. Live held-Shift detection uses Windows modifier polling;
+POSIX terminals still support Shift+F7 but do not report standalone Shift releases.
+
 After a calculation, the expression stays in the input bar with all its text selected.
 Backspace or Delete clears the selected expression; typing replaces it. Left moves the
 cursor to its beginning, and Right moves it to its end, clearing the selection so you

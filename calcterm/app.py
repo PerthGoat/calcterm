@@ -1077,7 +1077,9 @@ class ConsoleApp(SessionStorage):
         if width < 40 or height < 12:
             lines = ["Please resize the terminal to at least 40 columns and 12 rows.", self.message]
             return [clip(line, width) for line in lines[:height]], {}, None
-        fixed_titles = ["F7 Equations", "F8 Table", "F9 Clean Up", "F10 IO", "Shift+F7 Graph"]
+        alternate_titles = {"F7": "Graph"} if self.shift_pressed else {}
+        fixed_titles = [f"{key} {alternate_titles.get(key, label)}" for key, label in
+                        (("F7", "Equations"), ("F8", "Table"), ("F9", "Clean Up"), ("F10", "IO"))]
         prefixes = [f"F{i + 1} " for i in range(len(self.menus))]
         menu_separator = "  "
         fixed_width = display_width(" ".join(fixed_titles)) + sum(map(display_width, prefixes)) + len(prefixes)
@@ -1095,7 +1097,8 @@ class ConsoleApp(SessionStorage):
             menu_titles = [prefix + clip(menu["label"], limit)
                            for prefix, menu, limit in zip(prefixes, self.menus, limits)] + fixed_titles
         if display_width(menu_separator.join(menu_titles)) > width:
-            menu_titles = [f"F{i}" for i in range(1, 11)] + ["S+F7"]
+            menu_titles = [f"F{i}" for i in range(1, 11)]
+            menu_titles[6] = fixed_titles[0]
         if self.equation_open:
             return self.equation_frame(width, height, menu_separator.join(menu_titles))
         if self.table_open:
