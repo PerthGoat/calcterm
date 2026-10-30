@@ -49,6 +49,7 @@ imports available. Implementation lives in the `calcterm` package:
 | `engine.py` | Expression grammar, parser, and calculation sessions |
 | `forth.py` | Forth tokenizer, compiler, stack, and word dictionary |
 | `commands.py` | Application Forth words and colon-command compatibility |
+| `io.py` | Session IO transcript, wrapping, and scrollback |
 | `syntax.py` | Expression highlighting and ANSI colors |
 | `menus.py` | Menus, catalog entries, validation, and keyboard help |
 | `storage.py` | Configuration, backups, history, and saved Problems |
@@ -66,6 +67,7 @@ Run the app using the same commands as before. Keep `calcterm/` beside
 | F7 | Open the equation editor, or save the current equation and close it |
 | F8 | Open/close the table of checked equations |
 | F9 | Open/close Clean Up: clear variables/history or reset configuration |
+| F10 | Open/close IO: scrollable multiline command input and output |
 | Ctrl+T in F7 | Check/uncheck the selected equation for the table |
 | Up / Down | Select history results and expressions while preserving the input cursor |
 | Enter with history selected | Insert the highlighted part at the input cursor |
@@ -448,6 +450,25 @@ Add a user-defined unit using a positive numeric quantity:
 Custom units can use compound dimensions and previously defined units. Built-in
 names cannot be overwritten. Saved definitions store their evaluated scale so they
 do not depend on session variables. Custom offset temperature units are not supported.
+
+## IO view
+
+Press **F10** to see a session transcript of commands, calculations, output, and
+errors. Long output such as `:words` wraps across as many lines as needed instead
+of being clipped to the status bar. Run `:words`, then press F10 to read the full
+list. You can also type and execute commands directly in the IO view using the
+same input editor as the calculator.
+
+**Up/Down** scroll one output line; **PageUp/PageDown** scroll a page. **Tab**
+switches between input and output focus. In output focus, **Home/End** jump to
+the first/latest output; typing returns focus to input. In input focus, Home/End
+edit the input normally. New output follows the latest entry. **F10** or **Esc**
+returns to the calculator and preserves the input buffer.
+
+The transcript lasts for the session, is shared between Problems, and retains
+roughly the most recent 4 MiB of text. Removing calculator history does not clear
+the IO transcript. Forth newlines, partial output before errors, and long words
+remain available in scrollback. Plain and batch output remain complete text.
 
 ## Forth commands
 

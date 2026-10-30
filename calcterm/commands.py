@@ -190,6 +190,7 @@ class CommandProcessor:
 
     def execute(self, text):
         self._activity = False
+        self.vm.output = []
         if text.strip().lower() == ":abort":
             self.vm.pending = None
             self.app.message = "Forth definition canceled."

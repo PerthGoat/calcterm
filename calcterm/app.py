@@ -10,6 +10,7 @@ import unicodedata
 from .commands import CommandProcessor
 from .core import CalcError, Quantity, ZERO, expression_text, sp
 from .engine import Calculator, EQUATION_NAMES, HistoryEntry
+from .io import IOTranscript
 from .menus import HELP_LINES, catalog_items, cleanup_menu, default_menus, filter_menu_items
 from .storage import SessionStorage
 from .syntax import expression_highlights
@@ -70,6 +71,10 @@ class ConsoleApp(SessionStorage):
         self.equation_text = ""
         self.equation_cursor = 0
         self.table_open = False
+        self.io_open = False
+        self.io = IOTranscript()
+        self.io_focus_input = True
+        self.io_width, self.io_rows = 100, 17
         self.table_start = "0"
         self.table_step = "1"
         self.table_row = 0
@@ -210,7 +215,15 @@ class ConsoleApp(SessionStorage):
         _, self.menu_index, self.menu_filter = self.menu_stack.pop()
 
     def command(self, text):
-        self.commands.execute(text)
+        self.io.append("> " + text)
+        try:
+            self.commands.execute(text)
+        except (CalcError, OSError) as exc:
+            if self.forth.output:
+                self.io.append("".join(self.forth.output))
+            self.io.append("Error: " + str(exc))
+            raise
+        self.io.append("".join(self.forth.output) or self.message)
 
     def is_command_input(self, text):
         return self.forth.pending is not None or text.lstrip().startswith(":")
@@ -219,8 +232,9 @@ class ConsoleApp(SessionStorage):
         # Both interactive and plain mode share this command/calculation path.
         if not self.text.strip():
             return
+        command_input = self.is_command_input(self.text)
         try:
-            if self.is_command_input(self.text):
+            if command_input:
                 command = self.text.strip()
                 self.clear_input()
                 try:
@@ -229,14 +243,18 @@ class ConsoleApp(SessionStorage):
                     self.text, self.cursor = command, len(command)
                     raise
             else:
+                self.io.append("> " + self.text)
                 self.calculator.evaluate(self.text, approximate=approximate)
                 self.message = self.calculator.history[-1].line
+                self.io.append(self.calculator.history[-1].result)
                 self.save_history()
                 self.select_all_input()
             self.history_index = None
         except (CalcError, OSError) as exc:
             # Keep failed input in the editor for correction and persist any error entry.
             self.message = "Error: " + str(exc)
+            if not command_input:
+                self.io.append(self.message)
             self.history_index = None
             if self.is_command_input(self.text):
                 self.clear_input_selection()
@@ -259,12 +277,26 @@ class ConsoleApp(SessionStorage):
         if self.catalog_open:
             self.handle_catalog_key(key)
             return
+        if key == "F10":
+            if self.equation_open and not self.commit_equation():
+                return
+            if self.table_edit_field is not None and not self.commit_table_settings():
+                return
+            self.equation_open = self.table_open = self.help_open = False
+            self.open_menu = None
+            self.menu_stack.clear()
+            self.io_open = not self.io_open
+            self.io_focus_input = True
+            if self.io_open:
+                self.history_index = None
+            return
         if key == "F8":
             if self.equation_open and not self.commit_equation():
                 return
             if self.table_edit_field is not None and not self.commit_table_settings():
                 return
             self.equation_open = False
+            self.io_open = False
             self.open_menu = None
             self.menu_stack.clear()
             self.help_open = False
@@ -275,6 +307,7 @@ class ConsoleApp(SessionStorage):
             if self.table_edit_field is not None and not self.commit_table_settings():
                 return
             self.table_open = False
+            self.io_open = False
             if self.equation_open:
                 if self.commit_equation():
                     self.equation_open = False
@@ -289,6 +322,7 @@ class ConsoleApp(SessionStorage):
             if self.table_edit_field is not None and not self.commit_table_settings():
                 return
             self.table_open = False
+            self.io_open = False
             if self.equation_open:
                 if not self.commit_equation():
                     return
@@ -306,6 +340,23 @@ class ConsoleApp(SessionStorage):
         if self.table_open:
             self.handle_table_key(key)
             return
+        if self.io_open and not self.help_open:
+            if key == "ESC":
+                self.io_open = False
+                return
+            if key == "TAB":
+                self.io_focus_input = not self.io_focus_input
+                return
+            if key in ("UP", "DOWN", "PAGEUP", "PAGEDOWN") or (
+                    not self.io_focus_input and key in ("HOME", "END")):
+                self.io.scroll(key, self.io_width, self.io_rows, display_width)
+                return
+            if key in ("ENTER", "SHIFT_ENTER") and not self.io_focus_input:
+                self.io_focus_input = True
+                return
+            if (len(key) == 1 and key.isprintable()) or key in (
+                    "LEFT", "RIGHT", "SHIFT_LEFT", "SHIFT_RIGHT", "BACKSPACE", "DELETE", "CTRL_U"):
+                self.io_focus_input = True
         if self.help_open:
             if key in ("ESC", "ENTER", "TAB"):
                 self.help_open = False
@@ -920,18 +971,16 @@ class ConsoleApp(SessionStorage):
         if width < 40 or height < 12:
             lines = ["Please resize the terminal to at least 40 columns and 12 rows.", self.message]
             return [clip(line, width) for line in lines[:height]], {}, None
-        label_width = max(1, (width - 43) // 9)
-        menu_titles = [f"F{i + 1} {menu['label']}" for i, menu in enumerate(self.menus)]
-        menu_titles.append("F7 Equations")
-        menu_titles.append("F8 Table")
-        menu_titles.append("F9 Clean Up")
+        fixed_titles = ["F7 Equations", "F8 Table", "F9 Clean Up", "F10 IO"]
+        prefixes = [f"F{i + 1} " for i in range(len(self.menus))]
+        fixed_width = display_width("  ".join(fixed_titles)) + sum(map(display_width, prefixes)) + 2 * len(prefixes)
+        label_width = max(1, (width - fixed_width) // len(prefixes))
+        menu_titles = [prefix + menu["label"] for prefix, menu in zip(prefixes, self.menus)] + fixed_titles
         if display_width("  ".join(menu_titles)) > width:
-            menu_titles = [f"F{i + 1} {clip(menu['label'], label_width)}" for i, menu in enumerate(self.menus)]
-            menu_titles.append("F7 Equations")
-            menu_titles.append("F8 " + clip("Table", label_width))
-            menu_titles.append("F9 Clean Up")
+            menu_titles = [prefix + clip(menu["label"], label_width)
+                           for prefix, menu in zip(prefixes, self.menus)] + fixed_titles
         if display_width("  ".join(menu_titles)) > width:
-            menu_titles = [f"F{i}" for i in range(1, 10)]
+            menu_titles = [f"F{i}" for i in range(1, 11)]
         if self.equation_open:
             return self.equation_frame(width, height, "  ".join(menu_titles))
         if self.table_open:
@@ -940,7 +989,7 @@ class ConsoleApp(SessionStorage):
         selected: dict[int, tuple[int, int]] = {}
         # Choose a visible history window that follows either the newest result
         # or the older entry currently selected with the navigation keys.
-        index = self.history_index
+        index = None if self.io_open else self.history_index
         history = list(self.calculator.history)
         last_start = max(0, len(history) - self.history_rows)
         if index is None:
@@ -1018,6 +1067,23 @@ class ConsoleApp(SessionStorage):
         lines.append(f" {c.mode.upper()} | history {len(c.history)}/{c.history.maxlen} | {c.output_mode} | approx {c.precision} digits | {selection}")
         lines.append(self.message)
         lines += [""] * (height - len(lines))
+        if self.io_open:
+            self.io_width, self.io_rows = width, self.history_rows
+            output, first, total = self.io.window(width, self.io_rows, display_width)
+            lines[1] = "IO | Up/Down/Page: scroll | Tab: input/output | F10/Esc: close"
+            lines[2:2 + self.io_rows] = output + [""] * (self.io_rows - len(output))
+            if not total:
+                lines[2] = "Run :words or another command to see its complete output here."
+            self.syntax_highlights = {row: spans for row, spans in self.syntax_highlights.items() if row == input_row}
+            selected = {row: span for row, span in selected.items() if row == input_row}
+            if not self.io_focus_input:
+                cursor = None
+                selected = {}
+            focus = "input" if self.io_focus_input else "output"
+            lines[-2] = f" IO lines {first + 1 if total else 0}-{min(total, first + self.io_rows)}/{total} | {focus} | Tab: switch"
+        elif (self.io.entries and self.io.entries[-1].rstrip() == self.message.rstrip()
+              and ("\n" in self.message or display_width(self.message) > width)):
+            lines[-1] = "F10 IO: full output | " + self.message
         if self.help_open:
             # Overlays replace the relevant frame rows and hide the editing cursor.
             selected = {}

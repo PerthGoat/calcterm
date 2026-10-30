@@ -199,6 +199,8 @@ HELP_LINES = [
     "Ctrl+T in F7: check/uncheck a formula for the F8 table; new formulas are checked.",
     "F8: table; Tab: set start/step; Enter: apply; arrows/PageUp/PageDown: scroll.",
     "F9 Clean Up: clear set variables/history, or reset configuration to defaults.",
+    "F10 IO: full command output and input; Up/Down/Page: scroll; Tab: input/output focus.",
+    "In IO output focus: Home/End: first/latest output; F10/Esc: return to calculator.",
     "F6 > Catalog: all functions/symbols; type to filter; Enter inserts; Esc closes.",
     "Type in a menu to filter; Backspace removes a filter character.",
     "Submenus: Enter/Right opens; Right on a leaf switches menus; Left/Esc goes back.",
