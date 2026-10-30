@@ -14,6 +14,7 @@ class CommandProcessor:
         self.app = app
         self.vm = ForthInterpreter(on_define=self._defined, on_undefine=self._undefined)
         self.adapters = {}
+        self._record_output = False
         self._install_words()
 
     def _saved(self):
@@ -191,12 +192,13 @@ class CommandProcessor:
         self.app.save_history(force=True)
 
     def _calc(self, vm):
-        result = self.app.calculator.calculate(vm.string(), record=not self.app.io_open)
-        if not self.app.io_open:
+        record = not self.app.io_open and not self._record_output
+        result = self.app.calculator.calculate(vm.string(), record=record)
+        if record:
             self.app.save_history()
         vm.push(result)
 
-    def execute(self, text):
+    def execute(self, text, *, record_output=False):
         self._activity = False
         self.vm.output = []
         if text.strip().lower() == ":abort":
@@ -220,10 +222,18 @@ class CommandProcessor:
                 source = " ".join([*(json.dumps(value, ensure_ascii=False) for value in arguments), name])
             else:
                 source = arg + " " + name
-        output = self.vm.execute(source)
+        previous_record_output = self._record_output
+        self._record_output = record_output
+        try:
+            output = self.vm.execute(source)
+        finally:
+            self._record_output = previous_record_output
         if self.vm.pending is not None:
             self.app.message = f"Compiling Forth word {self.vm.pending[0]}; finish with ; (:abort cancels)."
         elif output:
             self.app.message = output.rstrip()
+            return output.rstrip() or None
         elif not self._activity:
             self.app.message = "Forth stack: " + self.vm.stack_text()
+            if self.vm.stack:
+                return str(self.vm.stack[-1])

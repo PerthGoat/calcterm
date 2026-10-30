@@ -163,6 +163,43 @@ class ForthAppTests(unittest.TestCase):
         self.submit(":fill")
         self.assertEqual(self.app.text, "sqrt(")
 
+    def test_main_screen_forth_results_are_visible_saved_and_recallable(self):
+        self.submit(": square dup * ;")
+        self.assertFalse(self.app.calculator.history)
+        self.submit(":square 2")
+        self.submit(":square 3")
+        self.assertEqual([(entry.source, entry.result) for entry in self.app.calculator.history],
+                         [(":square 2", "4"), (":square 3", "9")])
+        lines, _, _ = self.app.frame()
+        history_rows = "\n".join(lines[2:2 + self.app.history_rows])
+        self.assertIn(":square 2 = 4", history_rows)
+        self.assertIn(":square 3 = 9", history_rows)
+        self.assertEqual(self.app.forth.stack, [4, 9])
+        restored = ConsoleApp(config_path=self.path)
+        self.assertEqual(list(restored.calculator.history), list(self.app.calculator.history))
+        self.app.handle_key("UP")
+        self.app.handle_key("ENTER")
+        self.assertEqual(self.app.text, "9")
+
+    def test_main_forth_prints_record_once_and_commands_without_output_do_not(self):
+        self.submit(": mode-preset 12 precision ;")
+        self.submit(":mode-preset")
+        self.submit(":mode degree")
+        self.assertFalse(self.app.calculator.history)
+        self.submit(':forth "1/3+1/6" calc type')
+        self.assertEqual(len(self.app.calculator.history), 1)
+        entry = self.app.calculator.history[-1]
+        self.assertEqual((entry.source, entry.result), (':forth "1/3+1/6" calc type', "1/2"))
+        self.submit(':forth ." first" cr ." second"')
+        self.assertEqual(self.app.calculator.history[-1].result, "first\nsecond")
+        self.assertEqual(len(self.app.calculator.history), 2)
+        self.app.handle_key("F10")
+        before = list(self.app.calculator.history)
+        self.submit(":forth 8 dup *")
+        self.submit(':forth "4*5" calc type')
+        self.assertEqual(list(self.app.calculator.history), before)
+        self.assertEqual(self.app.io.entries[-1], "20")
+
     def test_invalid_saved_words_do_not_apply_settings_or_execute_code(self):
         for words in ({"bad": "__import__"}, {"quit": "1"}, ["bad"], {"bad": "if"}):
             with self.subTest(words=words):

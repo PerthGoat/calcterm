@@ -500,6 +500,13 @@ does the same thing as `:mode degree`. For user words, `:square 5` is a shortcut
 for `:forth 5 square`. Word names ignore case. `:words` (also **F6 Help → Forth
 words**) lists the available words; `:forth .s` displays the current stack.
 
+When entered on the main calculation screen, a Forth command's output appears
+in calculation history: `:square 2` displays `:square 2 = 4`. Printed text is
+used when available; otherwise, a stack-producing command shows its top stack
+value. The stack keeps its values. Definitions and settings commands without
+printed output stay in the status line. Commands entered in F10 IO keep their
+output in the IO transcript.
+
 Use `:def square` to inspect a word without executing it. For the example above,
 it displays `: square dup * ;`. Names ignore case, and long definitions are
 available in **F10 IO**. This shows the stored definition, with spacing normalized

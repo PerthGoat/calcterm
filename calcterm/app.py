@@ -214,16 +214,20 @@ class ConsoleApp(SessionStorage):
     def close_submenu(self):
         _, self.menu_index, self.menu_filter = self.menu_stack.pop()
 
-    def command(self, text):
+    def command(self, text, *, record_output=False):
+        record_output = record_output and not self.io_open
         self.io.append("> " + text)
         try:
-            self.commands.execute(text)
+            result = self.commands.execute(text, record_output=record_output)
         except (CalcError, OSError) as exc:
             if self.forth.output:
                 self.io.append("".join(self.forth.output))
             self.io.append("Error: " + str(exc))
             raise
         self.io.append("".join(self.forth.output) or self.message)
+        if record_output and result is not None:
+            self.calculator.history.append(HistoryEntry(text, result))
+            self.save_history()
 
     def is_command_input(self, text):
         return self.forth.pending is not None or text.lstrip().startswith(":")
@@ -238,7 +242,7 @@ class ConsoleApp(SessionStorage):
                 command = self.text.strip()
                 self.clear_input()
                 try:
-                    self.command(command)
+                    self.command(command, record_output=True)
                 except (CalcError, OSError):
                     self.text, self.cursor = command, len(command)
                     raise
