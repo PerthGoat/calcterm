@@ -191,8 +191,9 @@ class CommandProcessor:
         self.app.save_history(force=True)
 
     def _calc(self, vm):
-        result = self.app.calculator.calculate(vm.string())
-        self.app.save_history()
+        result = self.app.calculator.calculate(vm.string(), record=not self.app.io_open)
+        if not self.app.io_open:
+            self.app.save_history()
         vm.push(result)
 
     def execute(self, text):

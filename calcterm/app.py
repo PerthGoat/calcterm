@@ -244,10 +244,12 @@ class ConsoleApp(SessionStorage):
                     raise
             else:
                 self.io.append("> " + self.text)
-                self.calculator.evaluate(self.text, approximate=approximate)
-                self.message = self.calculator.history[-1].line
-                self.io.append(self.calculator.history[-1].result)
-                self.save_history()
+                result = self.calculator.calculate(self.text, approximate=approximate, record=not self.io_open)
+                self.message = (HistoryEntry(self.text.strip(), result).line if self.io_open else
+                                self.calculator.history[-1].line)
+                self.io.append(result)
+                if not self.io_open:
+                    self.save_history()
                 self.select_all_input()
             self.history_index = None
         except (CalcError, OSError) as exc:
@@ -260,7 +262,8 @@ class ConsoleApp(SessionStorage):
                 self.clear_input_selection()
             else:
                 self.select_all_input()
-            self.save_history()
+            if not self.io_open:
+                self.save_history()
 
     def handle_key(self, key):
         # Dispatch global shortcuts first, then route keys to help, menus, or the editor.

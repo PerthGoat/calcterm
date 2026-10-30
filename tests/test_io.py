@@ -74,7 +74,7 @@ class IOTests(unittest.TestCase):
         self.app.handle_key("1")
         self.assertTrue(self.app.io_focus_input)
         self.app.handle_key("ENTER")
-        self.assertEqual(self.app.calculator.history[-1].result, "1")
+        self.assertFalse(self.app.calculator.history)
         self.assertEqual(list(self.app.io.entries)[-2:], ["> 1", "1"])
         self.app.handle_key("F10")
         self.assertFalse(self.app.io_open)
@@ -107,8 +107,46 @@ class IOTests(unittest.TestCase):
         self.app.history_part = "result"
         self.app.handle_key("F10")
         self.app.handle_key("ENTER")
-        self.assertEqual(self.app.calculator.history[-1].result, "4")
+        self.assertEqual(self.app.calculator.history[-1].result, "7")
+        self.assertEqual(self.app.io.entries[-1], "4")
         self.assertEqual(self.app.text, "2+2")
+
+    def test_io_calculations_and_errors_stay_out_of_main_and_saved_history(self):
+        self.submit("2+3")
+        history = list(self.app.calculator.history)
+        history_file = self.app.history_path.read_bytes()
+        problems_file = self.app.problems_path.read_bytes()
+        self.app.handle_key("F10")
+        for text in ("3*2", "1/0", ':forth "4*5" calc type', ':forth "1/0" calc'):
+            self.submit(text)
+            self.assertEqual(list(self.app.calculator.history), history)
+        self.assertIn("6", self.app.io.entries)
+        self.assertIn("20", self.app.io.entries)
+        self.assertIn("Error: Division by zero.", self.app.io.entries)
+        self.assertTrue(self.app.save_session())
+        self.assertEqual(self.app.history_path.read_bytes(), history_file)
+        self.assertEqual(self.app.problems_path.read_bytes(), problems_file)
+        self.assertEqual(list(ConsoleApp(config_path=self.app.config_path).calculator.history), history)
+        self.app.handle_key("F10")
+        lines, _, _ = self.app.frame()
+        self.assertIn("2+3 = 5", "\n".join(lines[2:2 + self.app.history_rows]))
+        self.assertNotIn("3*2", "\n".join(lines[2:2 + self.app.history_rows]))
+        self.submit("7*8")
+        self.assertEqual(self.app.calculator.history[-1].result, "56")
+        self.assertEqual(len(self.app.calculator.history), len(history) + 1)
+
+    def test_io_approximation_and_assignment_work_without_creating_history(self):
+        self.app.handle_key("F10")
+        self.app.text, self.app.cursor = "1/3", 3
+        self.app.handle_key("SHIFT_ENTER")
+        self.assertTrue(self.app.io.entries[-1].startswith("0.333"))
+        self.assertFalse(self.app.calculator.history)
+        self.submit("6->x")
+        self.submit("ans*2")
+        self.assertEqual(self.app.io.entries[-1], "12")
+        self.assertEqual(self.app.calculator.variables["x"].value, 6)
+        self.assertEqual(self.app.calculator.answer.value, 12)
+        self.assertFalse(self.app.calculator.history)
 
     def test_frames_wrap_unicode_and_resize_without_clipping_transcript(self):
         self.app.command(':forth "' + '界e\u0301' * 120 + '" type')

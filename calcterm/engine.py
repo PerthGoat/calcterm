@@ -361,8 +361,8 @@ class Calculator:
             self.history.append(entry)
         return value
 
-    def calculate(self, text, *, approximate=False):
-        return self.format(self.evaluate(text, approximate=approximate), approximate=approximate)
+    def calculate(self, text, *, approximate=False, record=True):
+        return self.format(self.evaluate(text, record=record, approximate=approximate), approximate=approximate)
 
     def define_equation(self, name, expression):
         """Validate a formula without changing ans, history, or session variables."""

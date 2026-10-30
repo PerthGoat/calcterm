@@ -459,6 +459,10 @@ of being clipped to the status bar. Run `:words`, then press F10 to read the ful
 list. You can also type and execute commands directly in the IO view using the
 same input editor as the calculator.
 
+Calculations entered in IO, including errors and results from the Forth `calc`
+word, stay in the IO transcript and are excluded from the main calculator's
+history and saved Problem history. IO uses the shared calculator variables and `ans`.
+
 **Up/Down** scroll one output line; **PageUp/PageDown** scroll a page. **Tab**
 switches between input and output focus. In output focus, **Home/End** jump to
 the first/latest output; typing returns focus to input. In input focus, Home/End
