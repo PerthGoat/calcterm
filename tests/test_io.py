@@ -38,8 +38,8 @@ class IOTests(unittest.TestCase):
         # Read each wrapped row exactly once to reconstruct the original output.
         wrapped = self.app.io.wrapped_lines(80, display_width)
         self.assertEqual("".join(wrapped[1:]).split(), expected)
-        self.assertIn(expected[0], " ".join(content))
-        self.assertIn(expected[-1], " ".join(content))
+        self.assertIn(expected[0], "".join(content))
+        self.assertIn(expected[-1], "".join(content))
         self.assertIn("F10 IO", self.app.frame(100, 24)[0][0])
 
     def test_multiline_output_partial_output_and_errors_are_logged(self):

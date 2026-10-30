@@ -252,6 +252,65 @@ class ForthAppTests(unittest.TestCase):
         rows = (len(expected) + 39) // 40
         self.assertEqual("".join(self.app.io.wrapped_lines(40, display_width)[-rows:]), expected)
 
+    def test_undefine_removes_only_the_named_word_and_persists(self):
+        self.app.command(": square dup * ;")
+        self.app.command(": other 1+ ;")
+        self.app.command(":forth 7")
+        self.app.command(":undefine SQUARE")
+        self.assertEqual(self.app.message, "Undefined Forth word: square")
+        self.assertEqual(self.app.io.entries[-1], self.app.message)
+        self.assertEqual(self.app.forth.stack, [7])
+        self.assertNotIn("square", self.app.forth.definitions)
+        self.assertNotIn("square", self.app.forth.programs)
+        self.assertIn("other", self.app.forth.definitions)
+        self.assertNotIn("square", self.app.forth.execute("words").split())
+        with self.assertRaisesRegex(CalcError, "Unknown Forth word: square"):
+            self.app.command(":square 3")
+        restored = ConsoleApp(config_path=self.path)
+        self.assertNotIn("square", restored.forth.definitions)
+        restored.command(":other 4")
+        self.assertEqual(restored.forth.stack, [5])
+
+    def test_undefine_rejects_callers_without_changing_config(self):
+        self.app.command(": square dup * ; : twice square 2 * ;")
+        self.app.command(': quoted "square" drop ;')
+        before = self.path.read_bytes()
+        with self.assertRaisesRegex(CalcError, "referenced by: twice"):
+            self.app.command(":undefine square")
+        self.assertEqual(self.path.read_bytes(), before)
+        self.app.command(":twice 3")
+        self.assertEqual(self.app.forth.stack, [18])
+        self.app.command(":undefine twice")
+        self.app.command(':forth "square" undefine')
+        self.assertEqual(set(self.app.forth.definitions), {"quoted"})
+        self.assertEqual(set(ConsoleApp(config_path=self.path).forth.definitions), {"quoted"})
+
+    def test_undefine_allows_self_recursion_but_rejects_builtins_and_bad_names(self):
+        self.app.command(": recursive recurse ;")
+        self.app.command(":undefine recursive")
+        self.app.command(":forth 42")
+        before = self.path.read_bytes()
+        for name in ("dup", "mode", "undefine", "if", "forth", "abort"):
+            with self.subTest(name=name), self.assertRaisesRegex(CalcError, "Cannot undefine built-in"):
+                self.app.command(":undefine " + name)
+        for command in (":undefine", ":undefine square extra", ":undefine missing"):
+            with self.subTest(command=command), self.assertRaises(CalcError):
+                self.app.command(command)
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertEqual(self.app.forth.stack, [42])
+
+    def test_failed_undefine_autosave_preserves_file_and_retries_on_exit(self):
+        self.app.command(": square dup * ;")
+        before = self.path.read_bytes()
+        with patch.object(Path, "replace", side_effect=PermissionError("Locked")):
+            with self.assertRaisesRegex(CalcError, "Cannot save configuration"):
+                self.app.command(":undefine square")
+        self.assertEqual(self.path.read_bytes(), before)
+        self.assertNotIn("square", self.app.forth.definitions)
+        self.assertTrue(self.app._config_dirty)
+        self.assertTrue(self.app.save_session())
+        self.assertNotIn("square", ConsoleApp(config_path=self.path).forth.definitions)
+
     def test_unfinished_batch_and_plain_definitions_report_errors(self):
         for plain in (False, True):
             with self.subTest(plain=plain), patch("sys.stdout", new_callable=io.StringIO), \

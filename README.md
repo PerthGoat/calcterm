@@ -502,6 +502,12 @@ available in **F10 IO**. This shows the stored definition, with spacing normaliz
 and comments omitted. Built-in words such as `dup` and `format` are identified as
 native implementations. The Forth equivalent is `:forth "square" def`.
 
+Use `:undefine square` to remove one user-defined word and save the removal
+automatically. Names ignore case. Built-in words cannot be removed. If other
+user-defined words call it, the command lists those callers and leaves the
+dictionary unchanged; redefine or undefine the callers first. Self-recursive
+words can be removed. The Forth equivalent is `:forth "square" undefine`.
+
 Application words consume the following arguments, from left to right:
 
 | Word | Input stack values |

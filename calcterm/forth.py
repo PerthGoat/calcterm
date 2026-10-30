@@ -72,7 +72,7 @@ class ForthInterpreter:
     control_words = {":", ";", "if", "else", "then", "begin", "until", "again",
                      "while", "repeat", "do", "?do", "loop", "leave", "exit", "recurse"}
 
-    def __init__(self, on_define=None):
+    def __init__(self, on_define=None, on_undefine=None):
         self.stack = []
         self.words = {}
         self.definitions = {}
@@ -81,6 +81,7 @@ class ForthInterpreter:
         self.output = []
         self._output_size = 0
         self.on_define = on_define
+        self.on_undefine = on_undefine
         self.max_steps = 10000
         self.max_stack = 1024
         self._steps = 0
@@ -154,6 +155,26 @@ class ForthInterpreter:
         self.register("j", lambda vm: vm._index(1))
         self.register("words", lambda vm: vm._emit(" ".join(sorted(vm.words.keys() | vm.programs.keys()))))
         self.register("def", lambda vm: vm._emit(vm.definition(vm.string())))
+        self.register("undefine", lambda vm: vm._emit("Undefined Forth word: " + vm.undefine(vm.string())))
+
+    def undefine(self, name):
+        name = name.strip().lower()
+        if not name or any(char.isspace() for char in name):
+            raise CalcError("Use :undefine WORD to remove a user-defined word.")
+        if name in self.words or name in self.control_words or name in {"forth", "abort"}:
+            raise CalcError(f"Cannot undefine built-in Forth word: {name}")
+        if name not in self.definitions:
+            raise CalcError(f"Unknown Forth word: {name}")
+        callers = sorted(word for word, code in self.programs.items()
+                         if word != name and any(op == "call" and arg == name for op, arg in code))
+        if callers:
+            raise CalcError(f"Cannot undefine {name}; referenced by: {', '.join(callers)}. "
+                            "Redefine or undefine those words first.")
+        del self.definitions[name]
+        del self.programs[name]
+        if self.on_undefine:
+            self.on_undefine(name)
+        return name
 
     def definition(self, name):
         name = name.strip().lower()

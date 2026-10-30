@@ -220,4 +220,5 @@ HELP_LINES = [
     "Example: : preset \"approximate\" format 12 precision ; then :preset. Words save automatically.",
     "Forth: :words lists words; :abort cancels a pending definition; :forth .s shows the stack.",
     "Forth: :def square displays a word's saved definition; F10 shows long definitions in full.",
+    "Forth: :undefine square removes one user word and saves; remove its callers first.",
 ]

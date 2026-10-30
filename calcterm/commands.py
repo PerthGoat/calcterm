@@ -12,7 +12,7 @@ from .menus import categorize_unit_items, command_item, insert_item
 class CommandProcessor:
     def __init__(self, app):
         self.app = app
-        self.vm = ForthInterpreter(on_define=self._defined)
+        self.vm = ForthInterpreter(on_define=self._defined, on_undefine=self._undefined)
         self.adapters = {}
         self._install_words()
 
@@ -23,6 +23,11 @@ class CommandProcessor:
     def _defined(self, name):
         self._activity = True
         self.app.message = "Defined Forth word: " + name
+        self._saved()
+
+    def _undefined(self, name):
+        self._activity = True
+        self.app.message = "Undefined Forth word: " + name
         self._saved()
 
     def _register(self, name, action, adapter=None, saves=False):
@@ -91,6 +96,7 @@ class CommandProcessor:
         self.vm.register("calc", self._calc)
         self.vm.register("insert", lambda vm: app.insert(vm.string()))
         self.adapters["def"] = lambda arg: [arg]
+        self.adapters["undefine"] = lambda arg: [arg]
 
     def _mode(self, vm):
         self.app.calculator.set_mode(vm.string())
