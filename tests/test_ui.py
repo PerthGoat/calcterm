@@ -1539,7 +1539,7 @@ class ConsoleTests(unittest.TestCase):
         for shortcut in (None, "F7", "F8", "SHIFT_F7", "F10"):
             if shortcut is not None:
                 self.app.handle_key(shortcut)
-            for width in (40, 80, 100):
+            for width in (40, 80, 96, 100, 130, 160):
                 with self.subTest(view=shortcut, width=width):
                     self.app.shift_pressed = False
                     normal = self.app.frame(width, 24)[0][0]
@@ -1549,6 +1549,7 @@ class ConsoleTests(unittest.TestCase):
                     shifted = self.app.frame(width, 24)[0][0]
                     self.assertIn("F7 Graph", shifted)
                     self.assertNotIn("F7 Equations", shifted)
+                    self.assertEqual(normal.replace("F7 Equations", "F7 Graph    "), shifted)
                     self.assertLessEqual(display_width(shifted), width)
                     self.app.shift_pressed = False
                     self.assertEqual(self.app.frame(width, 24)[0][0], normal)

@@ -89,7 +89,8 @@ Run the app using the same commands as before. Keep `calcterm/` beside
 
 Hold **Shift** to show alternate F-key labels: **F7 Equations** changes to
 **F7 Graph**, then returns to Equations on release. Keys with no alternate action
-keep their usual label. Live held-Shift detection uses Windows modifier polling;
+keep their usual label. Each cell reserves space for its longest label, keeping
+the other F-key labels stationary. Live held-Shift detection uses Windows modifier polling;
 POSIX terminals still support Shift+F7 but do not report standalone Shift releases.
 
 After a calculation, the expression stays in the input bar with all its text selected.

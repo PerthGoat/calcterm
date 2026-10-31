@@ -1077,9 +1077,12 @@ class ConsoleApp(SessionStorage):
         if width < 40 or height < 12:
             lines = ["Please resize the terminal to at least 40 columns and 12 rows.", self.message]
             return [clip(line, width) for line in lines[:height]], {}, None
-        alternate_titles = {"F7": "Graph"} if self.shift_pressed else {}
-        fixed_titles = [f"{key} {alternate_titles.get(key, label)}" for key, label in
-                        (("F7", "Equations"), ("F8", "Table"), ("F9", "Clean Up"), ("F10", "IO"))]
+        fixed_titles = []
+        for key, primary, alternate in (("F7", "Equations", "Graph"), ("F8", "Table", None),
+                                        ("F9", "Clean Up", None), ("F10", "IO", None)):
+            label = alternate if self.shift_pressed and alternate is not None else primary
+            label_width = max(display_width(primary), display_width(alternate or primary))
+            fixed_titles.append(f"{key} {label}" + " " * (label_width - display_width(label)))
         prefixes = [f"F{i + 1} " for i in range(len(self.menus))]
         menu_separator = "  "
         fixed_width = display_width(" ".join(fixed_titles)) + sum(map(display_width, prefixes)) + len(prefixes)
