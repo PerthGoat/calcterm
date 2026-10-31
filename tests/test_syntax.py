@@ -78,6 +78,34 @@ class SyntaxTests(unittest.TestCase):
         self.assertTrue(colored.startswith("> \x1b[94mt\x1b[0m"))
         self.assertEqual(ANSI.sub("", colored), lines[input_row])
 
+    def test_secondary_function_labels_are_blue_in_all_views_without_moving_cells(self):
+        for shortcut in (None, "F7", "F8", "SHIFT_F7", "F10", "F1"):
+            if shortcut is not None:
+                self.app.handle_key(shortcut)
+            for width in (40, 100):
+                for syntax_colors in (True, False):
+                    with self.subTest(view=shortcut, width=width, syntax_colors=syntax_colors):
+                        self.app.syntax_colors = syntax_colors
+                        self.app.shift_pressed = False
+                        normal = self.app.frame(width, 24)[0][0]
+                        self.assertFalse(self.app.function_highlights)
+                        self.app.shift_pressed = True
+                        with patch("sys.stdout", new_callable=io.StringIO) as output, \
+                                patch("shutil.get_terminal_size", return_value=(width + 1, 24)):
+                            Terminal().render(self.app)
+                        self.assertIn("\x1b[94mF7 Graph\x1b[0m", output.getvalue())
+                        shifted = self.app.frame(width, 24)[0][0]
+                        self.assertEqual(normal.replace("F7 Equations", "F7 Graph    "), shifted)
+                        self.assertEqual([(shifted[first:last], kind)
+                                          for first, last, kind in self.app.function_highlights],
+                                         [("F7 Graph", "secondary")])
+                        self.app.shift_pressed = False
+                        self.assertEqual(self.app.frame(width, 24)[0][0], normal)
+                        self.assertFalse(self.app.function_highlights)
+        self.app.shift_pressed = True
+        self.app.frame(20, 6)
+        self.assertFalse(self.app.function_highlights)
+
     def test_equation_definitions_and_table_cells_have_colors_without_coloring_grid_lines(self):
         self.app.calculator.define_equation("y1", "4x")
         self.app.handle_key("F7")

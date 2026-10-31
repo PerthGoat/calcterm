@@ -55,6 +55,7 @@ class ConsoleApp(SessionStorage):
         self._selected_input: str | None = None
         self._selection_anchor: int | None = None
         self.syntax_highlights: dict[int, list[tuple[int, int, str]]] = {}
+        self.function_highlights: list[tuple[int, int, str]] = []
         self.syntax_colors = True
         self.history_index = None
         self.history_rows = 17  # Default 24-row terminal, minus menus and footer.
@@ -1062,6 +1063,7 @@ class ConsoleApp(SessionStorage):
         width, height = max(1, width), max(1, height)
         self.syntax_highlights = {}
         # Reserve two menu rows and five for the input's two rules, input, status, and message.
+        self.function_highlights = []
         self.history_rows = max(1, height - 7)
         history_limit = max(30, self.history_rows)
         history = self.calculator.history
@@ -1102,6 +1104,9 @@ class ConsoleApp(SessionStorage):
         if display_width(menu_separator.join(menu_titles)) > width:
             menu_titles = [f"F{i}" for i in range(1, 11)]
             menu_titles[6] = fixed_titles[0]
+        if self.shift_pressed:
+            first = sum(len(title) + len(menu_separator) for title in menu_titles[:6])
+            self.function_highlights.append((first, first + len(menu_titles[6].rstrip()), "secondary"))
         if self.equation_open:
             return self.equation_frame(width, height, menu_separator.join(menu_titles))
         if self.table_open:

@@ -12,7 +12,7 @@ from .graph import GRAPH_COLORS
 SYNTAX_TOKEN = re.compile(r"(?P<base>0[bB][01_]*|0[hH][0-9a-fA-F_]*|0[oO][0-7_]*)|"
                           + TOKEN.pattern + r"|(?P<unicode>[→⇒×÷−²³≤≥≠])", re.UNICODE)
 SYNTAX_COLORS = {"number": "38;2;184;134;11", "function": "94", "constant": "95",
-                 "unit": "92", "operator": "96", "command": "96"}
+                 "unit": "92", "operator": "96", "command": "96", "secondary": "94"}
 SYNTAX_COLORS.update({f"graph{index}": color for index, color in enumerate(GRAPH_COLORS)})
 
 

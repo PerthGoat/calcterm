@@ -183,7 +183,10 @@ class Terminal:
         # in one batch. Frame coordinates for the cursor are already one-based.
         for row, line in enumerate(lines):
             output.append(f"\x1b[{row + 1};1H\x1b[2K")
-            output.append(colorize_line(line, app.syntax_highlights.get(row, ()), selected.get(row)))
+            highlights = list(app.syntax_highlights.get(row, ()))
+            if row == 0:
+                highlights.extend(app.function_highlights)
+            output.append(colorize_line(line, highlights, selected.get(row)))
         if cursor:
             output.append(f"\x1b[{cursor[0]};{cursor[1]}H\x1b[?25h")
         sys.stdout.write("".join(output))
