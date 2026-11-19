@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import deque
 from pathlib import Path
 import re
+from typing import NamedTuple
 import unicodedata
 
 from .commands import CommandProcessor
@@ -21,6 +22,24 @@ from .syntax import expression_highlights
 MENU_INDICES = (0, 1, 2, 3, 4, 5, 8)
 MENU_KEYS = {f"F{index + 1}": index for index in MENU_INDICES}
 VIEW_KEYS = MENU_KEYS.keys() | {"F7", "SHIFT_F7", "F8", "F10"}
+
+
+class _HistoryTarget(NamedTuple):
+    entry_index: int
+    part: str
+
+
+class _MenuTarget(NamedTuple):
+    depth: int
+    item_index: int
+
+
+class _InputTarget(NamedTuple):
+    start: int
+    stop: int
+
+
+ClickAction = str | _HistoryTarget | _MenuTarget | _InputTarget | None
 
 
 class ConsoleApp(SessionStorage):
@@ -56,6 +75,8 @@ class ConsoleApp(SessionStorage):
         self._selection_anchor: int | None = None
         self.syntax_highlights: dict[int, list[tuple[int, int, str]]] = {}
         self.function_highlights: list[tuple[int, int, str]] = []
+        self._click_regions: dict[int, list[tuple[int, int, ClickAction]]] = {}
+        self._click_size = (0, 0)
         self.syntax_colors = True
         self.history_symbols = True
         self.history_index = None
@@ -310,6 +331,48 @@ class ConsoleApp(SessionStorage):
             number = MENU_KEYS[key]
             self.open_menu = None if previous_menu == number else number
             self.menu_index, self.menu_filter = 0, ""
+
+    def _click_region(self, row: int, left: int, right: int, action: ClickAction):
+        right = min(right, self._click_size[0])
+        if left < right:
+            self._click_regions.setdefault(row, []).append((left, right, action))
+
+    def handle_click(self, row: int, column: int):
+        """Act on a left click using the regions of the last rendered frame."""
+        width, height = self._click_size
+        if not (0 <= row < height and 0 <= column < width) or self.problem_dialog is not None or self.catalog_open:
+            return
+        # Later panels cover anything drawn underneath, including their borders and headings.
+        for left, right, action in reversed(self._click_regions.get(row, [])):
+            if not left <= column < right:
+                continue
+            if isinstance(action, (_HistoryTarget, _InputTarget)):
+                self.open_menu = None
+                self.menu_stack.clear()
+            if isinstance(action, str):
+                self.handle_key(action)
+            elif isinstance(action, _HistoryTarget):
+                self.history_index, self.history_part = action
+            elif isinstance(action, _InputTarget):
+                self.history_index = None
+                self.io_focus_input = True
+                self.clear_input_selection()
+                self.cursor = action.start
+                remaining = max(0, column - 2)  # Skip the "> " prompt.
+                for char in self.text[action.start:action.stop]:
+                    remaining -= display_width(char if char.isprintable() else " ")
+                    if remaining < 0:
+                        break
+                    self.cursor += 1
+            elif isinstance(action, _MenuTarget) and self.open_menu is not None:
+                while len(self.menu_stack) > action.depth:
+                    self.close_submenu()
+                self.menu_index = action.item_index
+                self.handle_key("ENTER")
+            return
+        if self.open_menu is not None:
+            self.open_menu = None
+            self.menu_stack.clear()
 
     def handle_key(self, key):
         # Dispatch global shortcuts first, then route keys to help, menus, or the editor.
@@ -985,6 +1048,8 @@ class ConsoleApp(SessionStorage):
         self.syntax_highlights = {}
         # Reserve two menu rows and five for the input's two rules, input, status, and message.
         self.function_highlights = []
+        self._click_regions.clear()
+        self._click_size = width, height
         self.history_rows = max(1, height - 7)
         history_limit = max(30, self.history_rows)
         history = self.calculator.history
@@ -1025,6 +1090,11 @@ class ConsoleApp(SessionStorage):
         if display_width(menu_separator.join(menu_titles)) > width:
             menu_titles = [f"F{i}" for i in range(1, 11)]
             menu_titles[6] = fixed_titles[0]
+        column = 0
+        for number, title in enumerate(menu_titles, start=1):
+            key = "SHIFT_F7" if number == 7 and self.shift_pressed else f"F{number}"
+            self._click_region(0, column, column + display_width(title.rstrip()), key)
+            column += display_width(title) + len(menu_separator)
         if self.shift_pressed:
             first = sum(len(title) + len(menu_separator) for title in menu_titles[:6])
             self.function_highlights.append((first, first + len(menu_titles[6].rstrip()), "secondary"))
@@ -1072,6 +1142,10 @@ class ConsoleApp(SessionStorage):
                 line = prefix + content[offset:]
                 expression = source if entry.is_error else content
                 self.highlight_expression(len(lines), expression, column=len(prefix), offset=offset)
+                if not (self.io_open or self.help_open):
+                    boundary = width if entry.is_error else display_width(prefix + content[offset:len(source) + 3])
+                    self._click_region(len(lines), 0, boundary, _HistoryTarget(j, "expression"))
+                    self._click_region(len(lines), boundary, width, _HistoryTarget(j, "result"))
             else:
                 line = "  (history is empty)" if i == 0 else ""
             lines.append(line)
@@ -1094,7 +1168,10 @@ class ConsoleApp(SessionStorage):
         while display_width(self.text[start_text:focus]) >= available:
             start_text += 1
         input_row = len(lines)
-        lines.append("> " + self.text[start_text:start_text + available])
+        stop_text = min(len(self.text), start_text + available)
+        lines.append("> " + self.text[start_text:stop_text])
+        if not self.help_open:
+            self._click_region(input_row, 0, width, _InputTarget(start_text, stop_text))
         self.highlight_expression(input_row, self.text, column=2, offset=start_text)
         cursor = (input_row + 1, 3 + display_width(self.text[start_text:self.cursor]))
         if input_selection is not None and index is None:
@@ -1172,8 +1249,14 @@ class ConsoleApp(SessionStorage):
                     anchor = min(anchor, width - box_width)
                 for row, content in enumerate(panel, start=top):
                     background = lines[row].ljust(width)
-                    lines[row] = background[:anchor] + content + background[anchor + box_width:]
+                    before = background[:anchor]
+                    lines[row] = before + content + background[anchor + box_width:]
                     self.mask_syntax_highlights(row, anchor, anchor + box_width)
+                    item_index = first + row - top - 2
+                    action = (_MenuTarget(depth, item_index)
+                              if top + 2 <= row < top + len(panel) - 2 and item_index < len(items) else None)
+                    column = display_width(before)
+                    self._click_region(row, column, column + box_width, action)
                 if depth == len(levels) - 1 and items:
                     selected[top + 2 + menu_index - first] = (anchor + 1, anchor + box_width - 1)
                 previous_width, previous_first = box_width, first

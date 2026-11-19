@@ -6,6 +6,7 @@ import unittest
 from unittest.mock import Mock, patch
 
 from calc_term import CalcError, Calculator, ConsoleApp, Terminal, display_width, main, validate_menus
+from calcterm.terminal_input import MouseClick
 
 
 class ConsoleTests(unittest.TestCase):
@@ -25,6 +26,11 @@ class ConsoleTests(unittest.TestCase):
         row, (first, last) = next(iter(selected.items()))
         return lines[row][first:last]
 
+    def click_label(self, label, width=100, height=24):
+        lines, _, _ = self.app.frame(width=width, height=height)
+        row, line = next((row, line) for row, line in enumerate(lines) if label in line)
+        self.app.handle_click(row, display_width(line[:line.index(label)]))
+
     def test_history_saves_without_settings_save_and_can_be_recalled(self):
         self.type_keys("5+3")
         self.app.handle_key("ENTER")
@@ -41,6 +47,70 @@ class ConsoleTests(unittest.TestCase):
         restored.handle_key("ENTER")
         reopened = ConsoleApp(config_path=self.config_path)
         self.assertEqual(reopened.calculator.history[-1].result, "9")
+
+    def test_mouse_selects_visible_history_expressions_results_and_errors(self):
+        for number in range(10):
+            self.app.calculator.evaluate(str(number))
+        self.app.calculator.evaluate("变量+sqrt(2)")
+        self.click_label("变量+√(2)", width=40, height=12)
+        self.assertEqual((self.app.history_index, self.app.history_part), (10, "expression"))
+        self.click_label("变量 + √(2)", width=40, height=12)
+        self.assertEqual((self.app.history_index, self.app.history_part), (10, "result"))
+        self.app.handle_key("ENTER")
+        self.assertEqual(self.app.text, "(变量 + √(2))")
+
+        with self.assertRaises(CalcError):
+            self.app.calculator.evaluate("1/0")
+        self.click_label("Error:", width=40, height=12)
+        self.assertEqual((self.app.history_index, self.app.history_part), (11, "expression"))
+
+    def test_mouse_opens_function_menus_and_activates_filtered_submenu_items(self):
+        for width, height in ((120, 24), (40, 12)):
+            with self.subTest(width=width, height=height):
+                self.app.clear_input()
+                self.click_label("F2", width, height)
+                self.assertEqual(self.app.open_menu, 1)
+                self.type_keys("length")
+                self.click_label("Length >", width, height)
+                self.assertEqual(len(self.app.menu_stack), 1)
+                self.type_keys("foot")
+                self.click_label("_ft foot", width, height)
+                self.assertEqual(self.app.text, "_ft")
+                self.assertIsNone(self.app.open_menu)
+
+    def test_clicking_input_focuses_editor_from_history_and_menu(self):
+        self.app.calculator.evaluate("2+2")
+        self.app.text = "123"
+        self.app.select_all_input()
+        self.app.handle_key("UP")
+        self.app.handle_key("F1")
+        lines, _, _ = self.app.frame()
+        self.app.handle_click(len(lines) - 4, 3)
+        self.assertIsNone(self.app.open_menu)
+        self.assertIsNone(self.app.history_index)
+        self.assertIsNone(self.app.input_selection)
+        self.assertEqual(self.app.cursor, 1)
+        self.app.handle_key("9")
+        self.assertEqual(self.app.text, "1923")
+
+    def test_clicking_scrolled_input_uses_visible_unicode_cell_positions(self):
+        text = "a" * 85 + "变量z"
+        self.app.text, self.app.cursor = text, len(text)
+        lines, _, _ = self.app.frame(width=40, height=12)
+        row = len(lines) - 4
+        column = display_width(lines[row][:lines[row].index("量")]) + 1
+        self.app.handle_click(row, column)
+        self.assertEqual(self.app.cursor, text.index("量"))
+
+    def test_terminal_dispatches_clicks_alongside_keys(self):
+        terminal = Terminal()
+        with patch("sys.stdout", new_callable=io.StringIO), \
+                patch("shutil.get_terminal_size", return_value=(100, 24)), \
+                patch.object(terminal, "read_shift_state", return_value=False), \
+                patch.object(terminal, "read_key", side_effect=[MouseClick(0, 0), "CTRL_C"]):
+            terminal.run(self.app)
+        self.assertEqual(self.app.open_menu, 0)
+        self.assertFalse(self.app.running)
 
     def test_persistent_history_preserves_unicode_and_arbitrary_precision(self):
         source = "1" + "0" * 5000 + "+1->ε"
@@ -1757,8 +1827,10 @@ class ConsoleTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "test error"):
                 with Terminal():
                     self.assertIn("\x1b[>4;2m", output.getvalue())
+                    self.assertIn("\x1b[?1000;1006h", output.getvalue())
                     raise RuntimeError("test error")
             text = output.getvalue()
+            self.assertLess(text.index("\x1b[?1000;1006l"), text.index("\x1b[?1049l"))
             self.assertLess(text.index("\x1b[>4m"), text.index("\x1b[?1049l"))
             termios.tcsetattr.assert_called_once_with(0, 1, ["saved mode"])
 

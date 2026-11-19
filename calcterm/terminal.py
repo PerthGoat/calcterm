@@ -1,4 +1,4 @@
-"""Platform keyboard input and ANSI rendering with terminal restoration."""
+"""Platform keyboard and mouse input with ANSI rendering and restoration."""
 
 from __future__ import annotations
 
@@ -12,6 +12,7 @@ import time
 
 from .core import CalcError
 from .syntax import colorize_line
+from .terminal_input import CONTROL_KEYS, MouseClick, WindowsConsoleInput
 
 
 # Map Windows extended keys and POSIX escape sequences to shared UI key names.
@@ -29,9 +30,14 @@ ANSI_KEYS = {"\x1b[A": "UP", "\x1b[B": "DOWN", "\x1b[C": "RIGHT", "\x1b[D": "LEF
              "\x1b[21~": "F10",
              "\x1b[18;2~": "SHIFT_F7",
              "\x1bOH": "HOME", "\x1bOF": "END"}
-CONTROL_KEYS = {"\r": "ENTER", "\n": "ENTER", "\x1b": "ESC", "\t": "TAB", "\x08": "BACKSPACE",
-                "\x7f": "BACKSPACE", "\x03": "CTRL_C", "\x04": "CTRL_D", "\x15": "CTRL_U", "\x0c": "CTRL_L",
-                "\x14": "CTRL_T"}
+SGR_MOUSE = re.compile(rb"\x1b\[<([0-9]+);([0-9]+);([0-9]+)M")
+
+
+def _mouse_press(button: int, column: int, row: int) -> MouseClick | None:
+    # Ignore modifier bits when recognizing a left press. Movement, wheels and releases have other bits.
+    if button & ~0x1c == 0 and column > 0 and row > 0:
+        return MouseClick(row - 1, column - 1)
+    return None
 
 
 def windows_shift_pressed():
@@ -104,12 +110,13 @@ def modified_terminal_key(sequence):
 
 
 class Terminal:
-    """Raw key input plus ANSI output, restoring console state on every exit."""
+    """Interactive input and ANSI output, restoring console state on every exit."""
 
     def __init__(self):
         self.size = None
         self._pending_byte = b""
         self._pending_wchar = ""
+        self._windows_input: WindowsConsoleInput | None = None
 
     def __enter__(self):
         # Save the host console settings before enabling interactive terminal behavior.
@@ -137,9 +144,11 @@ class Terminal:
         try:
             # Use the alternate screen and ask supporting POSIX terminals for modified keys.
             startup = "\x1b[?1049h\x1b[2J\x1b[H"
-            if os.name != "nt":
+            if os.name == "nt":
+                self._windows_input = WindowsConsoleInput.open(self.kernel, self.handle)
+            else:
                 tty.setraw(sys.stdin.fileno())
-                startup += "\x1b[>4;2m"
+                startup += "\x1b[>4;2m\x1b[?1000;1006h"
             sys.stdout.write(startup)
             sys.stdout.flush()
         except BaseException:
@@ -153,10 +162,13 @@ class Terminal:
         # Restore the cursor, screen, and console settings even when the app raises.
         try:
             if os.name != "nt":
-                sys.stdout.write("\x1b[>4m")
+                sys.stdout.write("\x1b[?1000;1006l\x1b[>4m")
             sys.stdout.write("\x1b[?25h\x1b[?1049l")
             sys.stdout.flush()
         finally:
+            if self._windows_input is not None:
+                self._windows_input.close()
+                self._windows_input = None
             if self.old_mode is not None:
                 if os.name == "nt":
                     self.kernel.SetConsoleMode(self.handle, self.old_mode)
@@ -164,9 +176,11 @@ class Terminal:
                     import termios
                     termios.tcsetattr(sys.stdin.fileno(), termios.TCSADRAIN, self.old_mode)
 
-    def read_key(self, timeout: float | None = None) -> str | None:
-        """Read one key, returning None on timeout so idle resizes can be handled."""
+    def read_key(self, timeout: float | None = None) -> str | MouseClick | None:
+        """Read a key or click, returning None when no actionable event arrives."""
         if os.name == "nt":
+            if self._windows_input is not None:
+                return self._windows_input.read(timeout)
             import msvcrt
             if not self._pending_wchar and timeout is not None:
                 deadline = time.monotonic() + timeout
@@ -216,6 +230,23 @@ class Terminal:
                         self._pending_byte = following
                         return "UNKNOWN"
                     sequence += following
+                    if sequence == b"\x1b[M":
+                        # Terminals without SGR reporting send three encoded bytes after CSI M.
+                        payload = []
+                        for _ in range(3):
+                            if not select.select([sys.stdin], [], [], 0.04)[0]:
+                                return "UNKNOWN"
+                            byte = os.read(fd, 1)
+                            if not byte:
+                                return "UNKNOWN"
+                            if byte[0] < 32:
+                                self._pending_byte = byte
+                                return "UNKNOWN"
+                            payload.append(byte[0] - 32)
+                        return _mouse_press(*payload)
+                    if sequence.startswith(b"\x1b[<") and following in (b"M", b"m"):
+                        match = SGR_MOUSE.fullmatch(sequence)
+                        return _mouse_press(*map(int, match.groups())) if match else None
                     text = sequence.decode("ascii", "replace")
                     if text in ANSI_KEYS:
                         return ANSI_KEYS[text]
@@ -271,15 +302,18 @@ class Terminal:
         app.shift_pressed = self.read_shift_state()
         self.render(app)
         while app.running:
-            key = self.read_key(timeout=0.1)
-            if key is not None:
-                app.handle_key(key)
+            event = self.read_key(timeout=0.1)
+            if isinstance(event, MouseClick):
+                if shutil.get_terminal_size((100, 24)) == self.size:
+                    app.handle_click(event.row, event.column)
+            elif event is not None:
+                app.handle_key(event)
             if not app.running:
                 break
             shift_pressed = self.read_shift_state()
             shift_changed = shift_pressed != app.shift_pressed
             app.shift_pressed = shift_pressed
-            if key is not None or shift_changed or shutil.get_terminal_size((100, 24)) != self.size:
+            if event is not None or shift_changed or shutil.get_terminal_size((100, 24)) != self.size:
                 self.render(app)
 
     def read_shift_state(self):

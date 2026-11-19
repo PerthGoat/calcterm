@@ -73,6 +73,9 @@ Run the app using the same commands as before. Keep `calcterm/` beside
 | Ctrl+T in F7 | Check/uncheck the selected equation for the table and graph |
 | Up / Down | Select history results and expressions while preserving the input cursor |
 | Enter with history selected | Insert the highlighted part at the input cursor |
+| Left-click a history expression or result | Select that part of the history entry |
+| Left-click the input row | Focus the editor and place the caret |
+| Left-click a function-key label or menu item | Open the menu or view, or activate the item |
 | Backspace with history selected | Delete the whole selected history entry |
 | Enter in input | Calculate and select the expression, or execute a `:` command |
 | Shift+Enter in input | Calculate an approximate result for this submission |

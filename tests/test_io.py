@@ -100,6 +100,18 @@ class IOTests(unittest.TestCase):
         self.assertEqual(state, (self.app.text, self.app.cursor, self.app.input_selection,
                                  list(self.app.calculator.history)))
 
+    def test_clicking_io_input_takes_focus_from_output(self):
+        self.app.text, self.app.cursor = "12", 2
+        self.app.handle_key("F10")
+        self.app.handle_key("TAB")
+        lines, _, cursor = self.app.frame()
+        self.assertIsNone(cursor)
+        self.app.handle_click(len(lines) - 4, 3)
+        self.assertTrue(self.app.io_focus_input)
+        self.assertEqual(self.app.cursor, 1)
+        self.app.handle_key("ENTER")
+        self.assertEqual(self.app.io.entries[-1], "12")
+
     def test_io_enter_executes_input_when_calculator_history_was_selected(self):
         self.app.calculator.calculate("3+4")
         self.app.text, self.app.cursor = "2+2", 3
