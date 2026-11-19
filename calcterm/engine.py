@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, replace
+from functools import cached_property
 import re
 from typing import cast
 
@@ -32,6 +33,10 @@ FUNCTION_ARITIES = {"log": (1, 2), "diff": (2, 3), "integrate": (2, 4), "solve":
                     "subs": (3,), "approx": (1, 2), "min": None, "max": None}
 TRANSLATE = str.maketrans({"→": "->", "⇒": "=>", "×": "*", "÷": "/", "−": "-", "²": "^2", "³": "^3",
                            "≤": "<=", "≥": ">=", "≠": "!="})
+HISTORY_OPERATORS = {operator: chr(symbol) for symbol, operator in TRANSLATE.items()
+                     if operator in ("->", "=>", "*", "-", "<=", ">=", "!=")}
+HISTORY_TOKEN = re.compile(r"(?P<arrow>->|=>)|" + TOKEN.pattern)
+OPEN_PAREN = re.compile(r"\s*\(")
 
 
 def normalize_input(text):
@@ -267,7 +272,34 @@ class HistoryEntry:
 
     @property
     def line(self):
-        return f"{self.source} = {'Error: ' if self.is_error else ''}{self.result}"
+        return self.display_line()[1]
+
+    def display_line(self, symbols=False) -> tuple[str, str]:
+        source, result = self.display_parts(symbols)
+        return source, f"{source} = {'Error: ' if self.is_error else ''}{result}"
+
+    def display_parts(self, symbols=False) -> tuple[str, str]:
+        return self._symbolic_parts if symbols else (self.source, self.result)
+
+    @cached_property
+    def _symbolic_parts(self) -> tuple[str, str]:
+        # Forth continuations that produce output end their definition with a semicolon.
+        if self.is_error or self.source.lstrip().startswith(":") or ";" in self.source:
+            return self.source, self.result
+        return symbolize_expression(self.source), symbolize_expression(self.result)
+
+
+def symbolize_expression(text: str) -> str:
+    """Use Unicode spellings for math tokens while keeping fraction notation."""
+    def substitute(match: re.Match[str]) -> str:
+        token = match.group()
+        if token == "pi":
+            return "π"
+        if token == "sqrt" and OPEN_PAREN.match(text, match.end()):
+            return "√"
+        return HISTORY_OPERATORS.get(token, token)
+
+    return HISTORY_TOKEN.sub(substitute, text)
 
 
 # Calculation engine: session variables, exact answers, and evaluation settings.

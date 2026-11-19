@@ -37,6 +37,11 @@ def output_options():
     return [command_item("Exact output", ":format exact"), command_item("Approximate output", ":format approximate")]
 
 
+def display_options(syntax_colors=True, history_symbols=True):
+    return [command_item("Syntax colors: " + ("On" if syntax_colors else "Off"), ":colors toggle"),
+            command_item("History symbols: " + ("On" if history_symbols else "Off"), ":historysymbols toggle")]
+
+
 def categorize_unit_items(registry, items):
     """Group unit insertion items, preserving other actions and existing submenus."""
     result = []
@@ -138,7 +143,7 @@ def default_menus(registry):
         {"label": "Symbols", "items": symbol_menu_items()},
         {"label": "Options", "items": [command_item("Radian mode", ":mode radian"), command_item("Degree mode", ":mode degree"),
          *output_options(),
-         command_item("Syntax colors: On", ":colors toggle"),
+         *display_options(),
          problem_menu(),
          command_item("Select result first", ":recall result"), command_item("Select expression first", ":recall expression"),
          insert_item("Set precision", ":precision 100"), insert_item("Rename a menu", ":menu 1 Math"),
@@ -191,6 +196,7 @@ def validate_menus(menus):
 HELP_LINES = [
     "Up/Down: select history results/expressions; Enter: insert the highlighted part.",
     "Backspace with history selected: delete the whole entry and save history.",
+    "F5 > History symbols: show √, π, and other symbols in calculation history.",
     "Shift+Enter in input: approximate this result; the configured output mode stays unchanged.",
     "After calculation: input stays selected; type to replace; Backspace/Delete clears.",
     "Left/Right on selected input: move to the beginning/end for editing.",

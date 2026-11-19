@@ -146,7 +146,7 @@ class ConsoleTests(unittest.TestCase):
         lines, selected, cursor = self.app.frame()
         self.assertIn("F1 Math", lines[0])
         self.assertIn("F6 Help", lines[0])
-        self.assertIn("3->x = 3", "\n".join(lines[2:5]))
+        self.assertIn("3→x = 3", "\n".join(lines[2:5]))
         self.assertEqual(lines[-4], "> 3->x")
         self.assertEqual(lines[-3], "-" * 100)
         self.assertIn("RADIAN", lines[-2])
@@ -875,13 +875,62 @@ class ConsoleTests(unittest.TestCase):
         self.app.calculator.evaluate("3->ε")
         self.app.handle_key("UP")
         self.app.handle_key("UP")
-        self.assertEqual(self.highlighted_text(), "3->ε")
+        self.assertEqual(self.highlighted_text(), "3→ε")
         self.app.handle_key("ESC")
         self.app.calculator.evaluate("3_in=>_ft")
         self.app.handle_key("UP")
         self.assertEqual(self.highlighted_text(), "1/4_ft")
         self.app.handle_key("UP")
-        self.assertEqual(self.highlighted_text(), "3_in=>_ft")
+        self.assertEqual(self.highlighted_text(), "3_in⇒_ft")
+
+    def test_history_symbols_render_and_recall_saved_math(self):
+        source = "sqrt (2)*pi" + "+(piano-piano)" * 4 + "->root"
+        self.app.text, self.app.cursor = source, len(source)
+        self.app.submit()
+        self.app = ConsoleApp(config_path=self.config_path)
+
+        self.app.handle_key("UP")
+        self.assertEqual(self.highlighted_text(width=40), "√(2)×π")
+        lines, selected, _ = self.app.frame(width=40)
+        row = next(iter(selected))
+        spans = [(lines[row][start:end], kind) for start, end, kind in self.app.syntax_highlights[row]]
+        self.assertIn(("√", "function"), spans)
+        self.assertIn(("π", "constant"), spans)
+
+        self.app.handle_key("UP")
+        displayed_source = "√ (2)×π" + "+(piano−piano)" * 4 + "→root"
+        self.assertEqual(self.highlighted_text(), displayed_source)
+        self.app.handle_key("ENTER")
+        self.assertEqual(self.app.text, displayed_source)
+
+        self.app.clear_input()
+        self.app.command(":historysymbols off")
+        self.app.handle_key("UP")
+        self.assertEqual(self.highlighted_text(width=40), "sqrt(2)*pi")
+        self.app.handle_key("UP")
+        self.app.handle_key("ENTER")
+        self.assertEqual(self.app.text, source)
+
+    def test_symbolized_result_recall_preserves_arithmetic_grouping(self):
+        self.app.calculator.evaluate("sqrt(2)*pi")
+        for symbols, spelling in ((True, "√(2)×π"), (False, "sqrt(2)*pi")):
+            with self.subTest(symbols=symbols):
+                self.app.history_symbols = symbols
+                self.app.text, self.app.cursor = "1/", 2
+                self.app.handle_key("UP")
+                self.assertEqual(self.highlighted_text(), spelling)
+                self.app.handle_key("ENTER")
+                self.assertEqual(self.app.text, f"1/({spelling})")
+                self.assertEqual(self.app.calculator.parse(self.app.text), self.app.calculator.parse("1/(sqrt(2)*pi)"))
+
+    def test_history_symbols_preserve_errors_and_forth_output(self):
+        source = ':forth ." sqrt(2)*pi -> text"'
+        for text in ("sqrt(2)/0", source):
+            self.app.text, self.app.cursor = text, len(text)
+            self.app.submit()
+        lines, _, _ = self.app.frame()
+        self.assertIn("sqrt(2)/0 = Error: Division by zero.", lines[2])
+        self.assertIn(source + " = sqrt(2)*pi -> text", lines[3])
 
     def test_page_navigation_preserves_selected_part(self):
         for i in range(10):
@@ -946,7 +995,7 @@ class ConsoleTests(unittest.TestCase):
         self.app.text, self.app.cursor = "()+1", 1
         self.app.handle_key("UP")
         self.app.handle_key("ENTER")
-        self.assertEqual(self.app.text, "(3*4)+1")
+        self.assertEqual(self.app.text, "(3×4)+1")
 
     def test_history_navigation_bounds_and_tab(self):
         self.app.handle_key("UP")

@@ -32,11 +32,33 @@ class ConfigurationTests(unittest.TestCase):
     def test_invalid_changes_do_not_replace_configuration(self):
         self.app.command(":mode degree")
         before = self.config.read_bytes()
-        for command in (":mode wrong", ":precision 1", ":colors invalid", ":format wrong", ":recall wrong"):
+        for command in (":mode wrong", ":precision 1", ":colors invalid", ":format wrong", ":recall wrong",
+                        ":historysymbols invalid"):
             with self.subTest(command=command), self.assertRaises(CalcError):
                 self.app.command(command)
             self.assertEqual(self.config.read_bytes(), before)
         self.assertFalse(self.app._config_dirty)
+
+    def test_history_symbols_toggle_is_available_in_saved_menus_and_persists(self):
+        menus = self.app.menus
+        menus[4]["items"] = [item for item in menus[4]["items"] if item.get("command") != ":historysymbols toggle"]
+        self.config.write_text(json.dumps({"menus": menus}), encoding="utf-8")
+
+        for label, next_value in (("On", False), ("Off", True)):
+            restored = ConsoleApp(config_path=self.config)
+            self.assertEqual(restored.history_symbols, label == "On")
+            restored.handle_key("F5")
+            for char in "History symbols":
+                restored.handle_key(char)
+            self.assertEqual([item["label"] for item in restored.menu_items()], ["History symbols: " + label])
+            restored.handle_key("ENTER")
+            self.assertEqual(restored.history_symbols, next_value)
+            self.assertEqual(json.loads(self.config.read_text(encoding="utf-8"))["history_symbols"], next_value)
+
+        restored = ConsoleApp(config_path=self.config)
+        restored.command(":historysymbols off")
+        restored.command(":resetconfig")
+        self.assertTrue(ConsoleApp(config_path=self.config).history_symbols)
 
     def test_failed_atomic_write_removes_its_temporary_file(self):
         self.app.command(":mode degree")

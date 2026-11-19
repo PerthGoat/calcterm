@@ -78,6 +78,7 @@ class CommandProcessor:
         self._register("format", self._format, lambda arg: [arg], saves=True)
         self._register("precision", self._precision, lambda arg: [self._number(arg)], saves=True)
         self._register("colors", self._colors, lambda arg: [arg or "toggle"], saves=True)
+        self._register("historysymbols", self._history_symbols, lambda arg: [arg or "toggle"], saves=True)
         self._register("recall", self._recall, lambda arg: [arg], saves=True)
         self._register("unit", self._unit, self._unit_args, saves=True)
         self._register("menu", self._menu, lambda arg: list(self._menu_args(arg)), saves=True)
@@ -112,13 +113,23 @@ class CommandProcessor:
         self.app.message = (f"Approximation precision: {self.app.calculator.precision} digits; "
                             "exact math is unchanged.")
 
+    @staticmethod
+    def _display_toggle(command, arg, current):
+        if arg == "toggle":
+            return not current
+        if arg in ("on", "off"):
+            return arg == "on"
+        raise CalcError(f"Use :{command} on, :{command} off, or :{command} toggle.")
+
     def _colors(self, vm):
-        arg = vm.string()
-        if arg not in ("on", "off", "toggle"):
-            raise CalcError("Use :colors on, :colors off, or :colors toggle.")
-        self.app.syntax_colors = {"on": True, "off": False, "toggle": not self.app.syntax_colors}[arg]
-        self.app.refresh_color_option()
+        self.app.syntax_colors = self._display_toggle("colors", vm.string(), self.app.syntax_colors)
+        self.app.refresh_display_options()
         self.app.message = "Syntax colors: " + ("On" if self.app.syntax_colors else "Off")
+
+    def _history_symbols(self, vm):
+        self.app.history_symbols = self._display_toggle("historysymbols", vm.string(), self.app.history_symbols)
+        self.app.refresh_display_options()
+        self.app.message = "History symbols: " + ("On" if self.app.history_symbols else "Off")
 
     def _recall(self, vm):
         arg = vm.string()

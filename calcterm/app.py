@@ -13,7 +13,7 @@ from .editing import edit_text, insert_text_at_cursor
 from .engine import Calculator, EQUATION_NAMES, HistoryEntry
 from .graph import GRAPH_COLORS, GRAPH_MARKERS, GraphView
 from .io import IOTranscript
-from .menus import HELP_LINES, catalog_items, cleanup_menu, default_menus, filter_menu_items
+from .menus import HELP_LINES, catalog_items, cleanup_menu, default_menus, display_options, filter_menu_items
 from .storage import SessionStorage
 from .syntax import expression_highlights
 
@@ -57,6 +57,7 @@ class ConsoleApp(SessionStorage):
         self.syntax_highlights: dict[int, list[tuple[int, int, str]]] = {}
         self.function_highlights: list[tuple[int, int, str]] = []
         self.syntax_colors = True
+        self.history_symbols = True
         self.history_index = None
         self.history_rows = 17  # Default 24-row terminal, minus menus and footer.
         self.history_start = 0
@@ -104,6 +105,7 @@ class ConsoleApp(SessionStorage):
         self.calculator.set_output_mode("exact")
         self.history_insert = "result"
         self.syntax_colors = True
+        self.history_symbols = True
         self.insert_mode = False
         self.forth.load_definitions({})
         self.forth.stack.clear()
@@ -200,10 +202,13 @@ class ConsoleApp(SessionStorage):
             raise CalcError("No menu is open.")
         return cleanup_menu() if self.open_menu == 8 else self.menus[self.open_menu]
 
-    def refresh_color_option(self):
+    def refresh_display_options(self):
+        labels = {option["command"]: option["label"]
+                  for option in display_options(self.syntax_colors, self.history_symbols)}
         for item in self.menus[4]["items"]:
-            if item.get("command") == ":colors toggle":
-                item["label"] = "Syntax colors: " + ("On" if self.syntax_colors else "Off")
+            command = item.get("command")
+            if command in labels:
+                item["label"] = labels[command]
 
     def menu_items(self):
         # Filtering applies to the active submenu, or the root when no submenu is open.
@@ -417,9 +422,10 @@ class ConsoleApp(SessionStorage):
             if self.history_index is not None:
                 entry = history[self.history_index]
                 part = self.history_part
-                recalled = entry.result if part == "result" else entry.source
+                source, result = entry.display_parts(symbols=self.history_symbols)
+                recalled = result if part == "result" else source
                 # Parenthesize composite results so insertion preserves their meaning.
-                if part == "result" and any(c in recalled for c in "+-*/^"):
+                if part == "result" and any(c in entry.result for c in "+-*/^"):
                     recalled = "(" + recalled + ")"
                 self.insert(recalled)
                 self.message = "Inserted history " + part + " at the cursor."
@@ -1048,11 +1054,12 @@ class ConsoleApp(SessionStorage):
             marker = "> " if j == index else "  "
             if j < len(history):
                 prefix = marker + f"{j + 1:2}. "
-                content = history[j].line
+                entry = history[j]
+                source, content = entry.display_line(symbols=self.history_symbols)
                 offset = 0
                 if j == index:
-                    first = 0 if self.history_part == "expression" else len(history[j].source) + 3
-                    last = len(history[j].source) if self.history_part == "expression" else len(content)
+                    first = 0 if self.history_part == "expression" else len(source) + 3
+                    last = len(source) if self.history_part == "expression" else len(content)
                     available = width - display_width(prefix)
                     if first and display_width(content[:last]) > available:
                         # Scroll the selected row so a result after a long expression is visible.
@@ -1062,9 +1069,8 @@ class ConsoleApp(SessionStorage):
                             offset += 1
                         prefix += "…"
                     selected[len(lines)] = (len(prefix) + first - offset, len(prefix) + last - offset)
-                    content = content[offset:]
-                line = prefix + content
-                expression = history[j].source if history[j].is_error else history[j].line
+                line = prefix + content[offset:]
+                expression = source if entry.is_error else content
                 self.highlight_expression(len(lines), expression, column=len(prefix), offset=offset)
             else:
                 line = "  (history is empty)" if i == 0 else ""

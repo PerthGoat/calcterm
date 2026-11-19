@@ -13,7 +13,7 @@ from .core import CalcError
 from .engine import Calculator, EQUATION_NAMES, HistoryEntry
 from .forth import ForthInterpreter
 from .graph import GraphView, validate_graph_settings
-from .menus import (categorize_unit_items, command_item, default_menus,
+from .menus import (categorize_unit_items, command_item, default_menus, display_options,
                     output_options, problem_menu, symbol_menu_items, validate_menus)
 
 
@@ -62,7 +62,7 @@ class SessionStorage(ABC):
     def commit_graph_settings(self) -> bool: ...
 
     @abstractmethod
-    def refresh_color_option(self) -> None: ...
+    def refresh_display_options(self) -> None: ...
 
     @staticmethod
     @abstractmethod
@@ -285,6 +285,9 @@ class SessionStorage(ABC):
             syntax_colors = data.get("syntax_colors", True)
             if not isinstance(syntax_colors, bool):
                 raise CalcError("syntax_colors must be true or false.")
+            history_symbols = data.get("history_symbols", True)
+            if not isinstance(history_symbols, bool):
+                raise CalcError("history_symbols must be true or false.")
             calculator = Calculator(data.get("mode", "radian"), data.get("precision", 50), data.get("output_mode", "exact"))
             recall = data.get("history_insert", "result")
             if recall not in ("result", "expression"):
@@ -337,8 +340,9 @@ class SessionStorage(ABC):
                         menus[4]["items"].append(option)
             if not any(item.get("label") == "Problems" and "items" in item for item in menus[4]["items"]):
                 menus[4]["items"].append(problem_menu())
-            if not any(item.get("command") == ":colors toggle" for item in menus[4]["items"]):
-                menus[4]["items"].append(command_item("Syntax colors: On", ":colors toggle"))
+            for option in display_options():
+                if not any(item.get("command") == option["command"] for item in menus[4]["items"]):
+                    menus[4]["items"].append(option)
             if not any(item.get("command") == ":backupconfig" for item in menus[4]["items"]):
                 menus[4]["items"].append(command_item("Create backup config", ":backupconfig"))
             # Older settings included the built-in history action under Options.
@@ -352,7 +356,8 @@ class SessionStorage(ABC):
             self.history_insert = recall
             self.menus = menus
             self.syntax_colors = syntax_colors
-            self.refresh_color_option()
+            self.history_symbols = history_symbols
+            self.refresh_display_options()
             self.table_start, self.table_step = start, step
             self.graph.settings = graph
         except (OSError, ValueError, TypeError, RecursionError) as exc:
@@ -365,6 +370,7 @@ class SessionStorage(ABC):
         data = {"mode": self.calculator.mode, "precision": self.calculator.precision,
                 "output_mode": self.calculator.output_mode,
                 "syntax_colors": self.syntax_colors,
+                "history_symbols": self.history_symbols,
                 "history_insert": self.history_insert, "units": self.calculator.unit_definitions,
                 "equations": self.calculator.equations,
                 "unchecked_equations": sorted(self.calculator.unchecked_equations,

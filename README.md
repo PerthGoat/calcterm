@@ -153,7 +153,7 @@ older saved Options menus are updated when loaded. F9 is a built-in menu; the si
 F1–F6 menus keep their existing configuration format.
 
 The third item, **Reset configuration**, restores radians, exact output, 50-digit
-precision, result-first history recall, syntax colors on, insertion mode off, and
+precision, result-first history recall, syntax colors and history symbols on, insertion mode off, and
 the default menus.
 The reset saves automatically. Saved Problems, equations, history, table settings,
 session variables/`ans`, and custom unit definitions are retained. The command
@@ -185,6 +185,11 @@ long expressions scroll into view. PageUp/PageDown jump one visible page of entr
 `:recall expression` changes the initial selection to the expression; both parts
 remain selectable with Up/Down. Composite recalled
 results are enclosed in parentheses to preserve arithmetic precedence.
+
+**F5 Options → History symbols** is on by default. It displays math in new and saved
+history rows with symbols such as `√(2)`, `π`, `×`, `≤`, and `→`. History recall uses
+the displayed spelling. You can also run `:historysymbols on`, `:historysymbols off`, or
+`:historysymbols toggle`.
 
 History saves automatically after each calculation, including errors, and restores on startup,
 including in `--plain` and `--eval` modes. Each Problem stores its own history in the
@@ -631,7 +636,7 @@ commands for radians/degrees, exact/approximate output, recall behavior, precisi
 menu editing, and saving.
 The settings file defaults to `calc_term_config.json` beside the script. Choose
 another with `python calc_term.py --config my_settings.json`. Validated changes to
-options, precision, history recall, syntax colors, custom units, and menus save
+options, precision, history recall, syntax colors, history symbols, custom units, and menus save
 immediately. A save error is displayed, preserving the previous file; pending
 configuration changes are retried on normal exit. The `:save` command and Save
 configuration menu item remain available for a manual retry.
@@ -654,6 +659,7 @@ loaded, preserving other actions. For example:
   "precision": 100,
   "output_mode": "exact",
   "history_insert": "result",
+  "history_symbols": true,
   "units": {"smoot": "1.7018_m"},
   "menus": [
     {"label": "Favorites", "items": [{"label": "Square", "insert": "^2"}]},
