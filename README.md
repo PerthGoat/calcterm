@@ -140,7 +140,7 @@ closes it. Filtering the category list also searches the units inside each categ
 Right on a unit switches to F3 Constants, clearing the submenu and filter; this
 also works when the submenu filter has no matches. In any menu, Right opens a
 selected submenu when available, or otherwise switches to the next top menu.
-In a submenu, Up wraps from the first item to the last, and Down wraps from the last to the first.
+In dropdown menus and submenus, Up wraps from the first item to the last, and Down wraps from the last to the first.
 Submenus appear beside their parent when space permits, or over it in narrow terminals.
 F4 includes ε, μ, Ω, π, other Greek letters, °, Å, and
 arrows. Selection inserts the symbol at the input cursor. Terminal size must be at

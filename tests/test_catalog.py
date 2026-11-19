@@ -74,6 +74,23 @@ class CatalogTests(unittest.TestCase):
             self.app.handle_key("ENTER")
             self.assertEqual(self.app.calculator.history[-1].line, "√9 = 3")
 
+    def test_saved_default_symbols_menu_gains_square_root(self):
+        menus = self.app.menus
+        menus[3]["items"] = [item for item in menus[3]["items"] if item["insert"] != "√"]
+        document = json.dumps({"menus": menus})
+        self.config.write_text(document, encoding="utf-8")
+
+        restored = ConsoleApp(config_path=self.config)
+        restored.handle_key("F4")
+        restored.handle_key("UP")
+        restored.handle_key("ENTER")
+        self.assertEqual(restored.text, "√")
+        self.assertEqual(self.config.read_text(encoding="utf-8"), document)
+
+        restored.save_config()
+        reloaded = ConsoleApp(config_path=self.config)
+        self.assertEqual(sum(item.get("insert") == "√" for item in reloaded.menus[3]["items"]), 1)
+
     def test_catalog_centers_large_popup_and_resizes_while_scrolled_to_the_end(self):
         self.open_from_help()
         self.app.handle_key("END")

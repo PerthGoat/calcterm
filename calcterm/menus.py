@@ -25,6 +25,10 @@ def insert_item(label, text):
     return {"label": label, "insert": text}
 
 
+def symbol_menu_items():
+    return [insert_item(f"{symbol} {label}", symbol) for symbol, label in SYMBOLS]
+
+
 def command_item(label, command):
     return {"label": label, "command": command}
 
@@ -131,7 +135,7 @@ def default_menus(registry):
         {"label": "Units", "items": categorize_unit_items(registry, [insert_item(f"{u.notation} {u.label}", u.notation) for u in units])
          + [insert_item("Define a unit", ":unit smoot = 1.7018_m")]},
         {"label": "Constants", "items": [insert_item(u.notation + " " + u.label, u.notation) for u in constants]},
-        {"label": "Symbols", "items": [insert_item(s + " " + label, s) for s, label in SYMBOLS]},
+        {"label": "Symbols", "items": symbol_menu_items()},
         {"label": "Options", "items": [command_item("Radian mode", ":mode radian"), command_item("Degree mode", ":mode degree"),
          *output_options(),
          command_item("Syntax colors: On", ":colors toggle"),

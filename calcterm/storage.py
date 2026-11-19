@@ -14,7 +14,7 @@ from .engine import Calculator, EQUATION_NAMES, HistoryEntry
 from .forth import ForthInterpreter
 from .graph import GraphView, validate_graph_settings
 from .menus import (categorize_unit_items, command_item, default_menus,
-                    output_options, problem_menu, validate_menus)
+                    output_options, problem_menu, symbol_menu_items, validate_menus)
 
 
 def write_json(path, data):
@@ -324,8 +324,13 @@ class SessionStorage(ABC):
             start, step = self.validate_table_settings(calculator, table.get("start", "0"), table.get("step", "1"))
             graph = validate_graph_settings(calculator, data.get("graph", {}))
             menus = validate_menus(data["menus"]) if "menus" in data else default_menus(calculator.registry)
-            if "menus" in data and not any("items" in item for item in menus[1]["items"]):
-                menus[1]["items"] = categorize_unit_items(calculator.registry, menus[1]["items"])
+            if "menus" in data:
+                if not any("items" in item for item in menus[1]["items"]):
+                    menus[1]["items"] = categorize_unit_items(calculator.registry, menus[1]["items"])
+                symbols = symbol_menu_items()
+                legacy_symbols = [item for item in symbols if item["insert"] != "√"]
+                if menus[3] == {"label": "Symbols", "items": legacy_symbols}:
+                    menus[3]["items"] = symbols
             if menus[4]["label"] == "Options":
                 for option in output_options():
                     if not any(item.get("command") == option["command"] for item in menus[4]["items"]):

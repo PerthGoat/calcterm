@@ -1161,6 +1161,16 @@ class ConsoleTests(unittest.TestCase):
                     row, (first, last) = next(iter(selected.items()))
                     self.assertIn(items[index]["label"], lines[row][first:last])
 
+    def test_function_menu_arrows_wrap(self):
+        self.app.handle_key("F1")
+        last = len(self.app.menu_items()) - 1
+        self.app.handle_key("UP")
+        self.assertEqual(self.app.menu_index, last)
+        self.app.handle_key("PAGEDOWN")
+        self.assertEqual(self.app.menu_index, last)
+        self.app.handle_key("DOWN")
+        self.assertEqual(self.app.menu_index, 0)
+
     def test_submenu_empty_filter_can_be_edited_and_closed(self):
         self.app.handle_key("F2")
         self.app.handle_key("ENTER")
