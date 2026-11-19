@@ -9,6 +9,7 @@ import unicodedata
 
 from .commands import CommandProcessor
 from .core import CalcError, Quantity, ZERO, expression_text, sp
+from .editing import edit_text, insert_text_at_cursor
 from .engine import Calculator, EQUATION_NAMES, HistoryEntry
 from .graph import GRAPH_COLORS, GRAPH_MARKERS, GraphView
 from .io import IOTranscript
@@ -17,9 +18,9 @@ from .storage import SessionStorage
 from .syntax import expression_highlights
 
 
-def insert_text_at_cursor(text, cursor, inserted, overwrite=False):
-    end = cursor + len(inserted) if overwrite else cursor
-    return text[:cursor] + inserted + text[end:], cursor + len(inserted)
+MENU_INDICES = (0, 1, 2, 3, 4, 5, 8)
+MENU_KEYS = {f"F{index + 1}": index for index in MENU_INDICES}
+VIEW_KEYS = MENU_KEYS.keys() | {"F7", "SHIFT_F7", "F8", "F10"}
 
 
 class ConsoleApp(SessionStorage):
@@ -34,7 +35,6 @@ class ConsoleApp(SessionStorage):
         self.problems_path = self.config_path.with_suffix(".problems.json")
         self.problem_name = "Default"
         self.problems: dict[str, dict] = {}
-        self._saved_problems = ""
         self._problems_load_failed = False
         self.problem_dialog: str | None = None
         self.problem_dialog_text = ""
@@ -183,14 +183,17 @@ class ConsoleApp(SessionStorage):
             if self.history_index is not None and history[self.history_index].is_error:
                 self.history_part = "expression"
             return
-        # Reading order is expression, result; Up traverses that order backwards.
-        parts = [(i, part) for i, entry in enumerate(history)
-                 for part in (("expression",) if entry.is_error else ("expression", "result"))]
-        position = max(0, parts.index((self.history_index, self.history_part)) + direction)
-        if position >= len(parts):
+        index = self.history_index
+        if direction < 0 and self.history_part == "result":
+            self.history_part = "expression"
+        elif direction > 0 and self.history_part == "expression" and not history[index].is_error:
+            self.history_part = "result"
+        elif index + direction >= len(history):
             self.history_index = None
-        else:
-            self.history_index, self.history_part = parts[position]
+        elif index + direction >= 0:
+            self.history_index = index + direction
+            self.history_part = ("result" if direction < 0 and not history[self.history_index].is_error
+                                 else "expression")
 
     def menu_root(self):
         if self.open_menu is None:
@@ -273,6 +276,36 @@ class ConsoleApp(SessionStorage):
             if not self.io_open:
                 self.save_history()
 
+    def switch_view(self, key):
+        if self.graph.edit_field is not None and not self.commit_graph_settings():
+            return
+        if self.table_edit_field is not None and not self.commit_table_settings():
+            return
+        if self.equation_open and not self.commit_equation():
+            return
+        previous_menu = self.open_menu
+        self.open_menu = None
+        self.menu_stack.clear()
+        self.help_open = False
+        self.equation_open = key == "F7" and not self.equation_open
+        self.table_open = key == "F8" and not self.table_open
+        self.graph_open = key == "SHIFT_F7" and not self.graph_open
+        self.io_open = key == "F10" and not self.io_open
+        if key == "SHIFT_F7":
+            self.message = "Graph | Tab: bounds | Left/Right: legend | Shift+F7/Esc: close"
+        elif key == "F10":
+            self.io_focus_input = True
+            if self.io_open:
+                self.history_index = None
+        elif key == "F8":
+            self.message = "Tab: start/step | Arrows: scroll | F7: equations | F8/Esc: close | Settings save automatically"
+        elif self.equation_open:
+            self.load_equation()
+        elif key in MENU_KEYS:
+            number = MENU_KEYS[key]
+            self.open_menu = None if previous_menu == number else number
+            self.menu_index, self.menu_filter = 0, ""
+
     def handle_key(self, key):
         # Dispatch global shortcuts first, then route keys to help, menus, or the editor.
         # Terminal-specific key encodings have already been converted to names here.
@@ -288,80 +321,8 @@ class ConsoleApp(SessionStorage):
         if self.catalog_open:
             self.handle_catalog_key(key)
             return
-        if (self.graph.edit_field is not None and key in
-                ({f"F{number}" for number in range(1, 11)} | {"SHIFT_F7"}) and not self.commit_graph_settings()):
-            return
-        if key == "SHIFT_F7":
-            if self.equation_open and not self.commit_equation():
-                return
-            if self.table_edit_field is not None and not self.commit_table_settings():
-                return
-            self.equation_open = self.table_open = self.io_open = self.help_open = False
-            self.open_menu = None
-            self.menu_stack.clear()
-            self.graph_open = not self.graph_open
-            self.message = "Graph | Tab: bounds | Left/Right: legend | Shift+F7/Esc: close"
-            return
-        if key == "F10":
-            if self.equation_open and not self.commit_equation():
-                return
-            if self.table_edit_field is not None and not self.commit_table_settings():
-                return
-            self.equation_open = self.table_open = self.help_open = False
-            self.graph_open = False
-            self.open_menu = None
-            self.menu_stack.clear()
-            self.io_open = not self.io_open
-            self.io_focus_input = True
-            if self.io_open:
-                self.history_index = None
-            return
-        if key == "F8":
-            if self.equation_open and not self.commit_equation():
-                return
-            if self.table_edit_field is not None and not self.commit_table_settings():
-                return
-            self.equation_open = False
-            self.graph_open = False
-            self.io_open = False
-            self.open_menu = None
-            self.menu_stack.clear()
-            self.help_open = False
-            self.table_open = not self.table_open
-            self.message = "Tab: start/step | Arrows: scroll | F7: equations | F8/Esc: close | Settings save automatically"
-            return
-        if key == "F7":
-            if self.table_edit_field is not None and not self.commit_table_settings():
-                return
-            self.table_open = False
-            self.graph_open = False
-            self.io_open = False
-            if self.equation_open:
-                if self.commit_equation():
-                    self.equation_open = False
-            else:
-                self.open_menu = None
-                self.menu_stack.clear()
-                self.help_open = False
-                self.equation_open = True
-                self.load_equation()
-            return
-        if key in ("F1", "F2", "F3", "F4", "F5", "F6", "F9"):
-            if self.table_edit_field is not None and not self.commit_table_settings():
-                return
-            self.table_open = False
-            self.graph_open = False
-            self.io_open = False
-            if self.equation_open:
-                if not self.commit_equation():
-                    return
-                self.equation_open = False
-            number = int(key[1:]) - 1
-            self.open_menu = None if self.open_menu == number else number
-            self.menu_index = 0
-            self.menu_filter = ""
-            self.menu_stack.clear()
-            self.help_open = False
+        if key in VIEW_KEYS:
+            self.switch_view(key)
             return
         if self.equation_open:
             self.handle_equation_key(key)
@@ -404,8 +365,8 @@ class ConsoleApp(SessionStorage):
             elif key in ("LEFT", "RIGHT"):
                 # Right on a leaf (or empty filter) advances to the next top menu.
                 # Left inside a submenu was handled above by returning to its parent.
-                menus = (0, 1, 2, 3, 4, 5, 8)
-                self.open_menu = menus[(menus.index(self.open_menu) + (1 if key == "RIGHT" else -1)) % len(menus)]
+                index = MENU_INDICES.index(self.open_menu) + (1 if key == "RIGHT" else -1)
+                self.open_menu = MENU_INDICES[index % len(MENU_INDICES)]
                 self.menu_index = 0
                 self.menu_filter = ""
                 self.menu_stack.clear()
@@ -538,27 +499,9 @@ class ConsoleApp(SessionStorage):
                          "PAGEDOWN": self.history_rows, "ENTER": 1, "TAB": 1}[key]
                 self.equation_index = max(0, min(98, self.equation_index + delta))
                 self.load_equation()
-        elif key == "LEFT":
-            self.equation_cursor = max(0, self.equation_cursor - 1)
-        elif key == "RIGHT":
-            self.equation_cursor = min(len(self.equation_text), self.equation_cursor + 1)
-        elif key == "HOME":
-            self.equation_cursor = 0
-        elif key == "END":
-            self.equation_cursor = len(self.equation_text)
-        elif key == "CTRL_U":
-            self.equation_text, self.equation_cursor = "", 0
-        elif key == "BACKSPACE" and self.equation_cursor:
-            position = self.equation_cursor
-            self.equation_text = self.equation_text[:position - 1] + self.equation_text[position:]
-            self.equation_cursor -= 1
-        elif key == "DELETE":
-            position = self.equation_cursor
-            self.equation_text = self.equation_text[:position] + self.equation_text[position + 1:]
-        elif len(key) == 1 and key.isprintable():
-            position = self.equation_cursor
-            self.equation_text, self.equation_cursor = insert_text_at_cursor(
-                self.equation_text, position, key, overwrite=self.insert_mode)
+        else:
+            self.equation_text, self.equation_cursor = edit_text(
+                self.equation_text, self.equation_cursor, key, self.insert_mode)
 
     def highlight_expression(self, row, text, column=0, offset=0):
         if not self.syntax_colors:
@@ -684,7 +627,6 @@ class ConsoleApp(SessionStorage):
             elif key == "HOME":
                 self.table_row, self.table_column = 0, 0
             return
-        text, position = self.table_fields[field], self.table_cursor
         if key == "ESC":
             self.table_edit_field = None
             self.message = "Table setup canceled | Tab: start/step | F8/Esc: close"
@@ -693,24 +635,9 @@ class ConsoleApp(SessionStorage):
         elif key in ("TAB", "UP", "DOWN"):
             self.table_edit_field = 1 - field
             self.table_cursor = len(self.table_fields[1 - field])
-        elif key == "LEFT":
-            self.table_cursor = max(0, position - 1)
-        elif key == "RIGHT":
-            self.table_cursor = min(len(text), position + 1)
-        elif key == "HOME":
-            self.table_cursor = 0
-        elif key == "END":
-            self.table_cursor = len(text)
-        elif key == "CTRL_U":
-            self.table_fields[field], self.table_cursor = "", 0
-        elif key == "BACKSPACE" and position:
-            self.table_fields[field] = text[:position - 1] + text[position:]
-            self.table_cursor -= 1
-        elif key == "DELETE":
-            self.table_fields[field] = text[:position] + text[position + 1:]
-        elif len(key) == 1 and key.isprintable():
-            self.table_fields[field], self.table_cursor = insert_text_at_cursor(
-                text, position, key, overwrite=self.insert_mode)
+        else:
+            self.table_fields[field], self.table_cursor = edit_text(
+                self.table_fields[field], self.table_cursor, key, self.insert_mode)
 
     def table_frame(self, width, height, menu_title):
         column_width = min(18, max(10, (width - 12) // 5))
@@ -984,31 +911,15 @@ class ConsoleApp(SessionStorage):
                 self.problem_dialog_text += key
                 self.problem_dialog_index = 0
             return
-        text, position = self.problem_dialog_text, self.problem_dialog_cursor
         if key == "ENTER":
             try:
-                self.new_problem(text)
+                self.new_problem(self.problem_dialog_text)
                 self.problem_dialog = None
             except CalcError as exc:
                 self.message = "Error: " + str(exc)
-        elif key == "LEFT":
-            self.problem_dialog_cursor = max(0, position - 1)
-        elif key == "RIGHT":
-            self.problem_dialog_cursor = min(len(text), position + 1)
-        elif key == "HOME":
-            self.problem_dialog_cursor = 0
-        elif key == "END":
-            self.problem_dialog_cursor = len(text)
-        elif key == "CTRL_U":
-            self.problem_dialog_text, self.problem_dialog_cursor = "", 0
-        elif key == "BACKSPACE" and position:
-            self.problem_dialog_text = text[:position - 1] + text[position:]
-            self.problem_dialog_cursor -= 1
-        elif key == "DELETE":
-            self.problem_dialog_text = text[:position] + text[position + 1:]
-        elif len(key) == 1 and key.isprintable():
-            self.problem_dialog_text, self.problem_dialog_cursor = insert_text_at_cursor(
-                text, position, key, overwrite=self.insert_mode)
+        else:
+            self.problem_dialog_text, self.problem_dialog_cursor = edit_text(
+                self.problem_dialog_text, self.problem_dialog_cursor, key, self.insert_mode)
 
     def problem_dialog_frame(self, lines, width, height):
         selected = {}
@@ -1273,22 +1184,33 @@ class ConsoleApp(SessionStorage):
 # Layout helpers measure terminal cells, which differ from Python string indices
 # for combining marks and wide Unicode characters.
 def display_width(text):
-    return sum(0 if unicodedata.combining(c) else 2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in text)
+    return len(text) if text.isascii() else sum(cell_width(char) for char in text)
+
+
+def cell_width(char):
+    if unicodedata.combining(char):
+        return 0
+    return 2 if unicodedata.east_asian_width(char) in ("W", "F") else 1
 
 
 def clip(text, width):
     """Truncate by terminal cells and strip controls supplied through config/input."""
-    safe = "".join(c if c.isprintable() else " " for c in text)
-    if display_width(safe) <= width:
-        return safe
-    result, used = [], 0
-    for c in safe:
-        cells = display_width(c)
-        if used + cells > max(0, width - 1):
-            break
-        result.append(c)
+    if width <= 0:
+        return ""
+    if text.isascii():
+        text = text if len(text) <= width else text[:width - 1] + "…"
+        return text if text.isprintable() else "".join(char if char.isprintable() else " " for char in text)
+    result, used, ellipsis_at = [], 0, 0
+    for char in text:
+        char = char if char.isprintable() else " "
+        cells = cell_width(char)
+        if used + cells > width:
+            return "".join(result[:ellipsis_at]) + "…"
+        result.append(char)
         used += cells
-    return "".join(result) + "…"
+        if used < width:
+            ellipsis_at = len(result)
+    return "".join(result)
 
 
 def menu_panel(items, heading, index, width, height, submenu=False):

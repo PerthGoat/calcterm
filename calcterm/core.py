@@ -65,7 +65,7 @@ class Unit:
 
     @property
     def notation(self):
-        return self.name if self.name.startswith(("_", "(")) else "_" + self.name
+        return self.name if self.category == "Compound" or self.name.startswith(("_", "(")) else "_" + self.name
 
 
 @dataclass(frozen=True)
@@ -406,7 +406,7 @@ class UnitRegistry:
             # A simple fraction followed by a unit is also a supported input literal.
             if not isinstance(value, (sp.Integer, sp.Rational, sp.Float, sp.Symbol)):
                 text = "(" + text + ")"
-            if any(c in unit.name for c in "*/^"):
+            if unit.category == "Compound":
                 return text + "*(" + unit.notation + ")"
             return text + unit.notation
         value = quantity.value if precision is None else approximate_value(quantity.value, precision)

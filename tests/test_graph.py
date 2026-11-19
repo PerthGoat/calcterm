@@ -64,6 +64,13 @@ class GraphTests(unittest.TestCase):
             with self.subTest(data=data), self.assertRaises(CalcError):
                 validate_graph_settings(self.calculator, data)
 
+    def test_single_column_plot_samples_the_center_and_keeps_the_bounds(self):
+        self.calculator.define_equation("y1", "x")
+        self.graph.settings.update(x_min="2", x_max="4", y_mode="manual", y_min="2", y_max="4")
+        plot = self.graph.plot(self.calculator, ["y1"], 1, 3)
+        self.assertEqual((plot.x_min, plot.x_max), (2, 4))
+        self.assertEqual(plot.cells, [[" "], ["1"], [" "]])
+
     def test_cache_reuses_samples_and_tracks_equations_mode_variables_and_ans(self):
         self.calculator.calculate("2->a")
         self.calculator.define_equation("y1", "sin(x)+a+ans")

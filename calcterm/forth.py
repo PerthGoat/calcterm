@@ -14,15 +14,27 @@ import re
 from .core import CalcError
 
 
+JSON_DECODER = json.JSONDecoder()
+MAX_SOURCE = 65536
+MAX_OUTPUT = 1048576
+
+
 @dataclass(frozen=True)
 class Token:
     kind: str
     value: str
 
+    def source_text(self):
+        if self.kind == "string":
+            return json.dumps(self.value, ensure_ascii=False)
+        if self.kind == "print":
+            return '." ' + self.value + '"'
+        return self.value
+
 
 def tokenize(source):
-    if len(source) > 65536:
-        raise CalcError("Forth source exceeds 65536 characters.")
+    if len(source) > MAX_SOURCE:
+        raise CalcError(f"Forth source exceeds {MAX_SOURCE} characters.")
     tokens, position = [], 0
     while position < len(source):
         if source[position].isspace():
@@ -50,11 +62,10 @@ def tokenize(source):
             position = end + 1
         elif source[position] == '"':
             try:
-                value, length = json.JSONDecoder().raw_decode(source[position:])
+                value, position = JSON_DECODER.raw_decode(source, position)
             except ValueError:
                 raise CalcError("Invalid or unclosed quoted Forth string.") from None
             tokens.append(Token("string", value))
-            position += length
         else:
             end = position
             while end < len(source) and not source[end].isspace() and source[end] not in ':;':
@@ -78,6 +89,7 @@ class ForthInterpreter:
         self.definitions = {}
         self.programs = {}
         self.pending = None
+        self._pending_size = 0
         self.output = []
         self._output_size = 0
         self.on_define = on_define
@@ -190,9 +202,9 @@ class ForthInterpreter:
         raise CalcError(f"Unknown Forth word: {name}")
 
     def _emit(self, text):
+        if self._output_size + len(text) > MAX_OUTPUT:
+            raise CalcError(f"Forth output limit of {MAX_OUTPUT} characters exceeded.")
         self._output_size += len(text)
-        if self._output_size > 1048576:
-            raise CalcError("Forth output limit of 1048576 characters exceeded.")
         self.output.append(text)
 
     def _duplicate(self, offset):
@@ -215,10 +227,19 @@ class ForthInterpreter:
             raise CalcError("Forth I/J requires an active counted loop.")
         self.push(self._loops[-1 - offset][1])
 
-    def stack_text(self):
-        values = " ".join(json.dumps(value, ensure_ascii=False) if isinstance(value, str) else str(value)
-                          for value in self.stack)
-        return f"<{len(self.stack)}>" + (" " + values if values else "")
+    def stack_text(self, *, truncate=False):
+        parts = [f"<{len(self.stack)}>"]
+        size = len(parts[0])
+        for value in self.stack:
+            text = json.dumps(value, ensure_ascii=False) if isinstance(value, str) else str(value)
+            size += len(text) + 1
+            if size > MAX_OUTPUT:
+                if truncate:
+                    parts.append("…")
+                    break
+                raise CalcError(f"Forth output limit of {MAX_OUTPUT} characters exceeded.")
+            parts.append(text)
+        return " ".join(parts)
 
     def _validate_name(self, name):
         if (not isinstance(name, str) or not name or len(name) > 128 or name != name.lower()
@@ -314,11 +335,7 @@ class ForthInterpreter:
         self._validate_name(name)
         if name not in self.definitions and len(self.definitions) >= 256:
             raise CalcError("Forth dictionary limit of 256 user words exceeded.")
-        parts = [json.dumps(token.value, ensure_ascii=False) if token.kind == "string" else
-                 '." ' + token.value + '"' if token.kind == "print" else token.value for token in tokens]
-        body = " ".join(parts)
-        if len(body) > 65536:
-            raise CalcError("Forth definition exceeds 65536 characters.")
+        body = " ".join(token.source_text() for token in tokens)
         program = self._compile(tokens, self.words.keys() | self.programs.keys() | {name}, name)
         self.definitions[name], self.programs[name] = body, program
         if self.on_define:
@@ -343,6 +360,9 @@ class ForthInterpreter:
                     elif token == Token("word", ":"):
                         raise CalcError("Nested Forth definitions are not supported.")
                     else:
+                        self._pending_size += len(token.source_text()) + bool(body)
+                        if self._pending_size > MAX_SOURCE:
+                            raise CalcError(f"Forth definition exceeds {MAX_SOURCE} characters.")
                         body.append(token)
                         if len(body) > 8192:
                             raise CalcError("Forth definition exceeds 8192 tokens.")
@@ -355,6 +375,7 @@ class ForthInterpreter:
                     name = tokens[index].value
                     self._validate_name(name)
                     self.pending = (name, [])
+                    self._pending_size = 0
                 else:
                     chunk.append(token)
                 index += 1

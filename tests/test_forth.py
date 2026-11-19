@@ -33,6 +33,23 @@ class ForthTests(unittest.TestCase):
         self.vm.execute(r'"a \"quote\"\nline"')
         self.assertEqual(self.vm.stack, ['a "quote"\nline'])
 
+    def test_multiline_definition_obeys_size_limit_before_termination(self):
+        self.vm.execute("7")
+        part = '"' + "x" * 40000 + '"'
+        self.vm.execute(": large " + part)
+        with self.assertRaisesRegex(CalcError, "definition exceeds 65536"):
+            self.vm.execute(part)
+        self.assertIsNone(self.vm.pending)
+        self.assertNotIn("large", self.vm.definitions)
+        self.assertEqual(self.vm.stack, [7])
+        self.assertEqual(self.vm.execute("1 + ."), "8 ")
+
+    def test_stack_display_respects_the_output_limit(self):
+        self.vm.execute('"' + "x" * 60000 + '" 20 0 do dup loop')
+        with self.assertRaisesRegex(CalcError, "output limit"):
+            self.vm.execute(".s")
+        self.assertEqual(len(self.vm.stack), 21)
+
     def test_branches_loops_nested_indices_and_recursion(self):
         self.vm.execute(": absolute dup 0< if negate else 0 + then ; -7 absolute 4 absolute")
         self.assertEqual(self.vm.stack, [7, 4])

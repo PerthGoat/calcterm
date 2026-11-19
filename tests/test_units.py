@@ -84,6 +84,7 @@ class UnitTests(unittest.TestCase):
             with self.subTest(source=source):
                 quantity = self.calc.evaluate(source)
                 unit = quantity.display
+                assert unit is not None
                 magnitude = sp.simplify((quantity.value - unit.offset) / unit.scale)
                 self.assertEqual(magnitude, sp.Rational(expected))
 
@@ -108,8 +109,19 @@ class UnitTests(unittest.TestCase):
 
     def test_area_suffix_does_not_square_coefficient(self):
         value = self.calc.evaluate("2_m^2=>_cm^2")
-        self.assertEqual(value.value / value.display.scale, 20000)
+        unit = value.display
+        assert unit is not None
+        self.assertEqual(value.value / unit.scale, 20000)
         self.assertEqual(self.calc.calculate("sqrt(9_cm^2)=>_cm"), "3_cm")
+
+    def test_compound_conversion_results_can_be_recalled(self):
+        for source, expected in (("4_m=>2*_m", "2*(2*_m)"), ("1=>2", "1/2*(2)"),
+                                 ("1_m=>_m+_m", "1/2*(_m+_m)"), ("0_m=>+_m", "0*(+_m)")):
+            with self.subTest(source=source):
+                quantity = self.calc.evaluate(source)
+                self.assertEqual(self.calc.history[-1].result, expected)
+                recalled = self.calc.parse(expected)
+                self.assertEqual((recalled.value, recalled.dims), (quantity.value, quantity.dims))
 
     def test_unit_mismatch_and_invalid_units(self):
         for source in ["1_m+1_s", "1_m=>_s", "1_unknown", "sin(1_m)", "1_m^x",

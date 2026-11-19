@@ -38,6 +38,20 @@ class ConfigurationTests(unittest.TestCase):
             self.assertEqual(self.config.read_bytes(), before)
         self.assertFalse(self.app._config_dirty)
 
+    def test_failed_atomic_write_removes_its_temporary_file(self):
+        self.app.command(":mode degree")
+        original = self.config.read_bytes()
+        unrelated = self.config.with_name(self.config.name + ".tmp")
+        unrelated.write_bytes(b"A different writer's file")
+        with patch.object(Path, "replace", side_effect=PermissionError("Locked")):
+            with self.assertRaisesRegex(CalcError, "Cannot save configuration"):
+                self.app.command(":mode radian")
+        self.assertEqual(self.config.read_bytes(), original)
+        self.assertEqual(unrelated.read_bytes(), b"A different writer's file")
+        self.assertEqual(list(self.config.parent.glob("*.tmp")), [unrelated])
+        self.assertTrue(self.app.save_session())
+        self.assertEqual(json.loads(self.config.read_text(encoding="utf-8"))["mode"], "radian")
+
     def test_options_create_numbered_backups_without_overwriting_previous_copies(self):
         self.app.command(":mode degree")
         original = self.config.read_bytes()

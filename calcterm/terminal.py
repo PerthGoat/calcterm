@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from contextlib import suppress
+from functools import lru_cache
 import os
 import re
 import shutil
@@ -35,19 +37,37 @@ CONTROL_KEYS = {"\r": "ENTER", "\n": "ENTER", "\x1b": "ESC", "\t": "TAB", "\x08"
 def windows_shift_pressed():
     # msvcrt uses the same arrow/Enter codes with and without Shift.
     import ctypes
-    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    loader = getattr(ctypes, "WinDLL", None)
+    return loader is not None and bool(_windows_key_state(loader)(0x10) & 0x8000)
+
+
+@lru_cache(maxsize=1)
+def _windows_key_state(loader):
+    import ctypes
+    user32 = loader("user32", use_last_error=True)
     user32.GetAsyncKeyState.argtypes = [ctypes.c_int]
     user32.GetAsyncKeyState.restype = ctypes.c_short
-    return bool(user32.GetAsyncKeyState(0x10) & 0x8000)
+    return user32.GetAsyncKeyState
 
 
 def windows_console_focused():
     """Check this console's window, including its Windows Terminal owner."""
     import ctypes
+    loader = getattr(ctypes, "WinDLL", None)
+    if loader is None:
+        return False
+    console_window, foreground_window, ancestor = _windows_console_api(loader)
+    console, foreground = console_window(), foreground_window()
+    # Windows Terminal owns its hidden ConPTY console window.
+    return bool(console and foreground and (foreground == console or foreground == ancestor(console, 3)))
+
+
+@lru_cache(maxsize=1)
+def _windows_console_api(loader):
     from ctypes import wintypes
 
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    kernel32 = loader("kernel32", use_last_error=True)
+    user32 = loader("user32", use_last_error=True)
     kernel32.GetConsoleWindow.argtypes = []
     kernel32.GetConsoleWindow.restype = wintypes.HWND
     user32.GetForegroundWindow.argtypes = []
@@ -55,21 +75,18 @@ def windows_console_focused():
     user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
     user32.GetAncestor.restype = wintypes.HWND
 
-    console = kernel32.GetConsoleWindow()
-    foreground = user32.GetForegroundWindow()
-    if not console or not foreground:
-        return False
-    # Windows Terminal owns its hidden ConPTY console window.
-    return foreground == console or foreground == user32.GetAncestor(console, 3)  # GA_ROOTOWNER
+    return kernel32.GetConsoleWindow, user32.GetForegroundWindow, user32.GetAncestor
 
 
 def modified_terminal_key(sequence):
     """Decode CSI-u or xterm modifyOtherKeys reports for character keys."""
-    match = re.fullmatch(r"\x1b\[(\d+);(\d+)u", sequence)
+    if len(sequence) > 64:
+        return "UNKNOWN"
+    match = re.fullmatch(r"\x1b\[([0-9]+);([0-9]+)u", sequence)
     if match:
         codepoint, modifiers = map(int, match.groups())
     else:
-        match = re.fullmatch(r"\x1b\[27;(\d+);(\d+)~", sequence)
+        match = re.fullmatch(r"\x1b\[27;([0-9]+);([0-9]+)~", sequence)
         if not match:
             return "UNKNOWN"
         modifiers, codepoint = map(int, match.groups())
@@ -91,6 +108,8 @@ class Terminal:
 
     def __init__(self):
         self.size = None
+        self._pending_byte = b""
+        self._pending_wchar = ""
 
     def __enter__(self):
         # Save the host console settings before enabling interactive terminal behavior.
@@ -115,14 +134,19 @@ class Terminal:
             import termios
             import tty
             self.old_mode = termios.tcgetattr(sys.stdin.fileno())
-            # Raw mode delivers individual keys without waiting for Enter or echoing them.
-            tty.setraw(sys.stdin.fileno())
-        # Use the alternate screen so the user's previous terminal contents survive exit.
-        sys.stdout.write("\x1b[?1049h\x1b[2J\x1b[H")
-        if os.name != "nt":
-            # Ask supporting terminals to distinguish Shift+Enter from Enter.
-            sys.stdout.write("\x1b[>4;2m")
-        sys.stdout.flush()
+        try:
+            # Use the alternate screen and ask supporting POSIX terminals for modified keys.
+            startup = "\x1b[?1049h\x1b[2J\x1b[H"
+            if os.name != "nt":
+                tty.setraw(sys.stdin.fileno())
+                startup += "\x1b[>4;2m"
+            sys.stdout.write(startup)
+            sys.stdout.flush()
+        except BaseException:
+            # Python calls __exit__ only after __enter__ succeeds.
+            with suppress(OSError, ValueError):
+                self.__exit__()
+            raise
         return self
 
     def __exit__(self, *args):
@@ -144,14 +168,14 @@ class Terminal:
         """Read one key, returning None on timeout so idle resizes can be handled."""
         if os.name == "nt":
             import msvcrt
-            if timeout is not None:
+            if not self._pending_wchar and timeout is not None:
                 deadline = time.monotonic() + timeout
                 while not msvcrt.kbhit():
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         return None
                     time.sleep(min(0.01, remaining))
-            char = msvcrt.getwch()
+            char, self._pending_wchar = self._pending_wchar or msvcrt.getwch(), ""
             if char in ("\x00", "\xe0"):
                 # Windows extended keys arrive as a prefix followed by a key code.
                 key = WINDOWS_KEYS.get(msvcrt.getwch(), "UNKNOWN")
@@ -161,23 +185,38 @@ class Terminal:
             if 0xd800 <= ord(char) <= 0xdbff:
                 # Join UTF-16 surrogate pairs into one Unicode character.
                 following = msvcrt.getwch()
-                return (char + following).encode("utf-16", "surrogatepass").decode("utf-16")
+                if 0xdc00 <= ord(following) <= 0xdfff:
+                    return (char + following).encode("utf-16", "surrogatepass").decode("utf-16")
+                self._pending_wchar = following
+                return "UNKNOWN"
+            if 0xdc00 <= ord(char) <= 0xdfff:
+                return "UNKNOWN"
             if char in ("\r", "\n") and windows_shift_pressed():
                 return "SHIFT_ENTER"
         else:
             # Read bytes directly: TextIO buffering can otherwise swallow pasted keys.
             import select
-            if timeout is not None and not select.select([sys.stdin], [], [], timeout)[0]:
+            if not self._pending_byte and timeout is not None and not select.select([sys.stdin], [], [], timeout)[0]:
                 return None
-            char = os.read(sys.stdin.fileno(), 1)
+            fd = sys.stdin.fileno()
+            char, self._pending_byte = self._pending_byte or os.read(fd, 1), b""
             if not char:
                 return "CTRL_D"
             if char == b"\x1b":
                 # A short lookahead distinguishes Esc alone from a multi-byte key sequence.
                 sequence = char
-                while select.select([sys.stdin], [], [], 0.04)[0]:
-                    sequence += os.read(sys.stdin.fileno(), 1)
-                    text = sequence.decode("ascii", "ignore")
+                while len(sequence) < 64 and select.select([sys.stdin], [], [], 0.04)[0]:
+                    following = os.read(fd, 1)
+                    if not following:
+                        break
+                    if len(sequence) == 1 and following not in (b"[", b"O"):
+                        self._pending_byte = following
+                        return "ESC"
+                    if not b" " <= following <= b"~":
+                        self._pending_byte = following
+                        return "UNKNOWN"
+                    sequence += following
+                    text = sequence.decode("ascii", "replace")
                     if text in ANSI_KEYS:
                         return ANSI_KEYS[text]
                     modified = modified_terminal_key(text)
@@ -186,11 +225,24 @@ class Terminal:
                     if len(sequence) > 2 and sequence[-1:] in b"~ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz":
                         break
                 return "ESC" if sequence == b"\x1b" else "UNKNOWN"
-            required = 1 if char[0] < 0x80 else 2 if char[0] < 0xe0 else 3 if char[0] < 0xf0 else 4
-            # Read the rest of a UTF-8 character before passing it to the editor.
+            first = char[0]
+            if first >= 0x80 and not 0xc2 <= first <= 0xf4:
+                return "UNKNOWN"
+            required = 1 if first < 0x80 else 2 if first < 0xe0 else 3 if first < 0xf0 else 4
             while len(char) < required:
-                char += os.read(sys.stdin.fileno(), 1)
-            char = char.decode("utf-8", "replace")
+                if not select.select([sys.stdin], [], [], 0.04)[0]:
+                    return "UNKNOWN"
+                following = os.read(fd, 1)
+                if not following:
+                    return "UNKNOWN"
+                if not 0x80 <= following[0] <= 0xbf:
+                    self._pending_byte = following
+                    return "UNKNOWN"
+                char += following
+            try:
+                char = char.decode("utf-8")
+            except UnicodeDecodeError:
+                return "UNKNOWN"
         return CONTROL_KEYS.get(char, char)
 
     def render(self, app):

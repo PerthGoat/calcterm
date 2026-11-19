@@ -205,6 +205,21 @@ class IOTests(unittest.TestCase):
 
 
 class TranscriptTests(unittest.TestCase):
+    def test_appending_rewraps_only_the_new_entries(self):
+        transcript = IOTranscript(max_characters=16)
+        measure = Mock(side_effect=display_width)
+        transcript.append("old text")
+        transcript.window(4, 2, measure)
+        measure.reset_mock()
+        transcript.append("new text")
+        self.assertEqual(transcript.window(4, 2, measure), (["new ", "text"], 2, 4))
+        self.assertEqual(measure.call_count, len("new text"))
+        large = "one huge entry well over the cap"
+        transcript.append(large)
+        self.assertEqual(transcript.characters, 16)
+        self.assertEqual(list(transcript.entries), [large[-16:]])
+        self.assertTrue(transcript.discarded)
+
     def test_scrollback_is_bounded_and_new_output_follows_tail(self):
         transcript = IOTranscript(max_characters=20)
         transcript.append("first entry")

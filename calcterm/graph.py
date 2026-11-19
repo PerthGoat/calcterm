@@ -5,6 +5,7 @@ import math
 import sys
 
 from .core import CalcError, Quantity, ZERO, expression_text, sp
+from .editing import edit_text
 
 
 DEFAULT_GRAPH = {"x_min": "-10", "x_max": "10", "y_mode": "auto", "y_min": "-10", "y_max": "10"}
@@ -71,7 +72,8 @@ class GraphView:
 
     def edit(self, key, overwrite=False):
         field = self.edit_field
-        text, position = self.fields[field], self.cursor
+        if field is None:
+            return
         if key == "ESC":
             self.edit_field = None
         elif key in ("TAB", "UP", "DOWN"):
@@ -80,29 +82,12 @@ class GraphView:
             self.cursor = len(self.fields[self.edit_field])
         elif field == 2:
             if key in (" ", "LEFT", "RIGHT"):
-                self.fields[2] = "manual" if text == "auto" else "auto"
+                self.fields[2] = "manual" if self.fields[2] == "auto" else "auto"
             elif key.lower() in ("a", "m"):
                 self.fields[2] = "auto" if key.lower() == "a" else "manual"
             self.cursor = len(self.fields[2])
-        elif key == "LEFT":
-            self.cursor = max(0, position - 1)
-        elif key == "RIGHT":
-            self.cursor = min(len(text), position + 1)
-        elif key == "HOME":
-            self.cursor = 0
-        elif key == "END":
-            self.cursor = len(text)
-        elif key == "CTRL_U":
-            self.fields[field], self.cursor = "", 0
-        elif key == "BACKSPACE" and position:
-            self.fields[field] = text[:position - 1] + text[position:]
-            self.cursor -= 1
-        elif key == "DELETE":
-            self.fields[field] = text[:position] + text[position + 1:]
-        elif len(key) == 1 and key.isprintable():
-            end = position + 1 if overwrite else position
-            self.fields[field] = text[:position] + key + text[end:]
-            self.cursor += 1
+        else:
+            self.fields[field], self.cursor = edit_text(self.fields[field], self.cursor, key, overwrite)
 
     def apply(self, calculator):
         draft = dict(zip(DEFAULT_GRAPH, self.fields))
@@ -123,36 +108,42 @@ class GraphView:
         except (CalcError, TypeError, ValueError, OverflowError, ZeroDivisionError):
             return None
 
-    def _samples(self, calculator, names, columns):
-        key = (id(calculator), columns, tuple(self.settings.items()), tuple(names),
-               tuple(calculator.equations.items()), tuple(calculator.variables.items()),
-               calculator.answer, calculator.mode, calculator.precision, tuple(calculator.unit_definitions.items()))
+    def _samples(self, calculator, names, columns, key):
         if self._sample_cache is not None and self._sample_cache[0] == key:
             return self._sample_cache[1]
         lower = graph_number(calculator, self.settings["x_min"], "x min")[1]
         upper = graph_number(calculator, self.settings["x_max"], "x max")[1]
-        xs = [lower * (1 - column / (columns - 1)) + upper * (column / (columns - 1))
-              for column in range(columns)]
+        span = upper - lower
+        xs = ([lower + span * (column / (columns - 1)) for column in range(columns - 1)] + [upper]
+              if columns > 1 else [lower + span / 2])
         curves = [[self._value(calculator, name, x) for x in xs] for name in names]
-        samples = xs, curves
+        samples = lower, upper, xs, curves
         self._sample_cache = key, samples
         return samples
 
     @staticmethod
     def _auto_bounds(curves):
-        values = [value for curve in curves for value in curve if value is not None]
-        if not values:
+        lower, upper = math.inf, -math.inf
+        for curve in curves:
+            for value in curve:
+                if value is not None:
+                    lower, upper = min(lower, value), max(upper, value)
+        if lower == math.inf:
             return -1.0, 1.0
-        lower, upper = min(values), max(values)
         scale = max(abs(lower), abs(upper), 1.0)
         padding = scale * (0.1 if lower == upper else (upper / scale - lower / scale) * 0.05)
         return max(-sys.float_info.max, lower - padding), min(sys.float_info.max, upper + padding)
 
     def plot(self, calculator, names, columns, rows):
-        xs, curves = self._samples(calculator, names, columns)
-        key = self._sample_cache[0], rows
+        columns, rows = max(1, columns), max(1, rows)
+        names = tuple(names)
+        sample_key = (id(calculator), columns, tuple(self.settings.items()), names,
+                      tuple(calculator.equations.items()), tuple(calculator.variables.items()),
+                      calculator.answer, calculator.mode, calculator.precision, tuple(calculator.unit_definitions.items()))
+        key = sample_key, rows
         if self._plot_cache is not None and self._plot_cache[0] == key:
             return self._plot_cache[1]
+        x_min, x_max, xs, curves = self._samples(calculator, names, columns, sample_key)
         if self.settings["y_mode"] == "auto":
             lower, upper = self._auto_bounds(curves)
         else:
@@ -166,8 +157,8 @@ class GraphView:
         def y_position(value):
             return (upper / scale - value / scale) / y_span * (rows - 1)
 
-        if xs[0] <= 0 <= xs[-1]:
-            axis = round(-xs[0] / (xs[-1] - xs[0]) * (columns - 1))
+        if x_min <= 0 <= x_max:
+            axis = round(-x_min / (x_max - x_min) * (columns - 1))
             for row in cells:
                 row[axis] = "|"
         if lower <= 0 <= upper:
@@ -190,9 +181,10 @@ class GraphView:
                 position = y_position(value)
                 if lower <= value <= upper:
                     mark(round(position), column, index)
-                if column == 0 or values[column - 1] is None:
+                previous_value = values[column - 1] if column else None
+                if previous_value is None:
                     continue
-                previous = y_position(values[column - 1])
+                previous = y_position(previous_value)
                 if not math.isfinite(position) or not math.isfinite(previous):
                     continue
                 if abs(position - previous) > 2:
@@ -207,6 +199,6 @@ class GraphView:
                 for row in range(first, last + 1):
                     mark(row, column, index)
         invalid = [name for name, values in zip(names, curves) if all(value is None for value in values)]
-        plot = GraphPlot(cells, colors, xs[0], xs[-1], lower, upper, invalid)
+        plot = GraphPlot(cells, colors, x_min, x_max, lower, upper, invalid)
         self._plot_cache = key, plot
         return plot

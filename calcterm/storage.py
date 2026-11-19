@@ -2,18 +2,71 @@
 
 from __future__ import annotations
 
+from abc import ABC, abstractmethod
 from collections import deque
+from contextlib import suppress
 import json
+from pathlib import Path
+from tempfile import NamedTemporaryFile
 
 from .core import CalcError
 from .engine import Calculator, EQUATION_NAMES, HistoryEntry
-from .graph import validate_graph_settings
+from .forth import ForthInterpreter
+from .graph import GraphView, validate_graph_settings
 from .menus import (categorize_unit_items, command_item, default_menus,
                     output_options, problem_menu, validate_menus)
 
 
-class SessionStorage:
+def write_json(path, data):
+    """Replace a JSON file only after a complete write beside the destination."""
+    temporary = None
+    try:
+        with NamedTemporaryFile(mode="w", encoding="utf-8", errors="backslashreplace", delete=False,
+                                dir=path.parent, prefix=path.name + ".", suffix=".tmp") as stream:
+            temporary = Path(stream.name)
+            stream.write(json.dumps(data, indent=2, ensure_ascii=False) + "\n")
+        temporary.replace(path)
+        temporary = None
+    finally:
+        if temporary is not None:
+            with suppress(OSError):
+                temporary.unlink(missing_ok=True)
+
+
+def history_records(entries):
+    return [{"source": entry.source, "result": entry.result, **({"is_error": True} if entry.is_error else {})}
+            for entry in entries]
+
+
+class SessionStorage(ABC):
     """Persistence methods for ConsoleApp and its live session state."""
+
+    config_path: Path
+    history_path: Path
+    problems_path: Path
+    graph: GraphView
+    forth: ForthInterpreter
+    problem_delete_name: str
+    menu_stack: list[tuple[dict, int, str]]
+
+    @abstractmethod
+    def clear_input(self) -> None: ...
+
+    @abstractmethod
+    def commit_equation(self) -> bool: ...
+
+    @abstractmethod
+    def commit_table_settings(self) -> bool: ...
+
+    @abstractmethod
+    def commit_graph_settings(self) -> bool: ...
+
+    @abstractmethod
+    def refresh_color_option(self) -> None: ...
+
+    @staticmethod
+    @abstractmethod
+    def validate_table_settings(calculator, start, step) -> tuple[str, str]: ...
 
     @staticmethod
     def history_entries(data) -> list[HistoryEntry]:
@@ -36,9 +89,7 @@ class SessionStorage:
                 "unchecked_equations": sorted(self.calculator.unchecked_equations, key=EQUATION_NAMES.index),
                 "table": {"start": self.table_start, "step": self.table_step},
                 "graph": dict(self.graph.settings),
-                "history": [{"source": entry.source, "result": entry.result,
-                             **({"is_error": True} if entry.is_error else {})}
-                            for entry in self.calculator.history]}
+                "history": history_records(self.calculator.history)}
 
     @staticmethod
     def validate_problem_name(name):
@@ -50,8 +101,8 @@ class SessionStorage:
         if not isinstance(data, dict):
             raise CalcError("Each Problem must be an object.")
         # Restore definitions, not old calculations or session variable assignments.
-        calculator = Calculator(self.calculator.mode, self.calculator.precision, self.calculator.output_mode)
-        calculator.registry = self.calculator.registry
+        calculator = Calculator(self.calculator.mode, self.calculator.precision, self.calculator.output_mode,
+                                registry=self.calculator.registry)
         calculator.unit_definitions = dict(self.calculator.unit_definitions)
         equations = data.get("equations", {})
         if not isinstance(equations, dict):
@@ -73,14 +124,8 @@ class SessionStorage:
         graph = validate_graph_settings(calculator, data.get("graph", {}))
         return calculator, start, step, graph
 
-    @staticmethod
-    def problems_document(problems, active):
-        return json.dumps({"version": 1, "active": active, "problems": problems},
-                          indent=2, ensure_ascii=False) + "\n"
-
     def _load_problems(self):
         self.problems = {"Default": self.problem_snapshot()}
-        self._saved_problems = self.problems_document(self.problems, self.problem_name)
         try:
             data = json.loads(self.problems_path.read_text(encoding="utf-8"))
             if not isinstance(data, dict) or data.get("version") != 1:
@@ -91,34 +136,30 @@ class SessionStorage:
             if not isinstance(active, str) or active not in problems:
                 raise CalcError("The active Problem does not exist.")
             names = set()
-            prepared = {}
             for name, state in problems.items():
-                if self.validate_problem_name(name) != name or name.casefold() in names:
+                folded = self.validate_problem_name(name).casefold()
+                if name != name.strip() or folded in names:
                     raise CalcError("Problem names must be unique and have no surrounding spaces.")
-                names.add(name.casefold())
-                prepared[name] = self.prepare_problem(state)
+                names.add(folded)
+                if name != active:
+                    self.prepare_problem(state)
+            self._apply_problem(active, self.prepare_problem(problems[active]))
             self.problems = problems
-            self._apply_problem(active, prepared[active])
-            self._saved_problems = self.problems_document(problems, active)
         except FileNotFoundError:
             pass
-        except (OSError, ValueError, TypeError) as exc:
+        except (OSError, ValueError, TypeError, RecursionError) as exc:
             self._problems_load_failed = True
             self.message += f" | Problems load error: {exc} (original file preserved)"
 
     def _write_problems(self, problems, active):
         if self._problems_load_failed:
             raise CalcError("Cannot save Problems while their file has a load error; original file preserved.")
-        document = self.problems_document(problems, active)
-        if document != self._saved_problems:
-            temporary = self.problems_path.with_name(self.problems_path.name + ".tmp")
+        if active != self.problem_name or problems != self.problems:
             try:
-                temporary.write_text(document, encoding="utf-8")
-                temporary.replace(self.problems_path)
+                write_json(self.problems_path, {"version": 1, "active": active, "problems": problems})
             except OSError as exc:
                 raise CalcError(f"Cannot save Problems: {exc}") from None
         self.problems = problems
-        self._saved_problems = document
 
     def save_problems(self):
         try:
@@ -211,7 +252,7 @@ class SessionStorage:
             self._saved_history = tuple(entries)
         except FileNotFoundError:
             pass
-        except (OSError, ValueError, TypeError) as exc:
+        except (OSError, ValueError, TypeError, RecursionError) as exc:
             self.message += f" | History load error: {exc} (original file preserved)"
 
     def save_history(self, force=False):
@@ -224,12 +265,8 @@ class SessionStorage:
                 return False
             self._saved_history = entries
             return True
-        temporary = self.history_path.with_name(self.history_path.name + ".tmp")
         try:
-            data = [{"source": entry.source, "result": entry.result,
-                     **({"is_error": True} if entry.is_error else {})} for entry in entries]
-            temporary.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-            temporary.replace(self.history_path)
+            write_json(self.history_path, history_records(entries))
         except OSError as exc:
             self.message = self.message.split(" | History save error:", 1)[0] + f" | History save error: {exc}"
             return False
@@ -313,7 +350,7 @@ class SessionStorage:
             self.refresh_color_option()
             self.table_start, self.table_step = start, step
             self.graph.settings = graph
-        except (OSError, ValueError, TypeError) as exc:
+        except (OSError, ValueError, TypeError, RecursionError) as exc:
             # Invalid files never partially replace the live state.
             self.message = f"Config error: {exc} (using defaults; original file preserved)"
 
@@ -330,10 +367,8 @@ class SessionStorage:
                 "table": {"start": self.table_start, "step": self.table_step},
                 "graph": dict(self.graph.settings),
                 "menus": self.menus, "forth_words": self.forth.definitions}
-        temporary = self.config_path.with_name(self.config_path.name + ".tmp")
         try:
-            temporary.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-            temporary.replace(self.config_path)
+            write_json(self.config_path, data)
         except OSError as exc:
             raise CalcError(f"Cannot save configuration: {exc}") from None
         self._config_dirty = False

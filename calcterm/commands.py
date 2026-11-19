@@ -234,6 +234,6 @@ class CommandProcessor:
             self.app.message = output.rstrip()
             return output.rstrip() or None
         elif not self._activity:
-            self.app.message = "Forth stack: " + self.vm.stack_text()
+            self.app.message = "Forth stack: " + self.vm.stack_text(truncate=True)
             if self.vm.stack:
                 return str(self.vm.stack[-1])

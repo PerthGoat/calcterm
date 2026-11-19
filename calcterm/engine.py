@@ -26,6 +26,10 @@ FUNCTIONS = {"sin", "cos", "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh"
              "exp", "ln", "log", "abs", "floor", "ceil", "factorial", "simplify", "expand", "factor",
              "diff", "integrate", "solve", "subs", "approx", "min", "max"}
 EQUATION_NAMES = tuple(f"y{i}" for i in range(1, 100))
+PRECEDENCE = {"|": 6, "xor": 7, "&": 8, "<<": 9, ">>": 9,
+              "+": 10, "-": 10, "*": 20, "/": 20, "%": 20, "^": 30, "**": 30}
+FUNCTION_ARITIES = {"log": (1, 2), "diff": (2, 3), "integrate": (2, 4), "solve": (2,),
+                    "subs": (3,), "approx": (1, 2), "min": None, "max": None}
 TRANSLATE = str.maketrans({"→": "->", "⇒": "=>", "×": "*", "÷": "/", "−": "-", "²": "^2", "³": "^3",
                            "≤": "<=", "≥": ">=", "≠": "!="})
 
@@ -35,8 +39,7 @@ def normalize_input(text):
     return text.translate(TRANSLATE).strip()
 
 
-def decimal_literals(text: str, registry: UnitRegistry) -> str:
-    """Normalize integer bases and digit separators, preserving names and units."""
+def _expand_base_literals(text: str, registry: UnitRegistry) -> str:
     def convert(match: re.Match[str]) -> str:
         prefix, digits = match.groups()
         if (match.start() and text[match.start() - 1] == ".") or text[match.end():match.end() + 1] == ".":
@@ -58,8 +61,15 @@ def decimal_literals(text: str, registry: UnitRegistry) -> str:
             raise CalcError(f"Invalid digits in base-{BASES[prefix.lower()]} literal 0{prefix}{number}.") from None
         return str(value) + suffix
 
-    text = BASE_LITERAL.sub(convert, text)
+    return BASE_LITERAL.sub(convert, text)
+
+
+def decimal_literals(text: str, registry: UnitRegistry) -> str:
+    """Normalize integer bases and digit separators, preserving names and units."""
+    text = _expand_base_literals(text, registry)
     # Remove grouping underscores only from numbers; unit suffixes must keep theirs.
+    if "_" not in text:
+        return text
     return TOKEN.sub(lambda match: match.group().replace("_", "")
                      if match.lastgroup == "number" else match.group(), text)
 
@@ -75,7 +85,7 @@ class Parser:
         self.local_variables = local_variables or {}
         self.equation_stack = equation_stack
         self.validating_equation = validating_equation
-        text = decimal_literals(text, calculator.registry)
+        text = _expand_base_literals(text, calculator.registry)
         self.tokens = []
         position = 0
         while position < len(text):
@@ -174,8 +184,9 @@ class Parser:
                 left = Quantity(sp.Symbol("ans")) if self.validating_equation else self.calculator.answer
             else:
                 # Unassigned names remain symbolic rather than being treated as errors.
-                left = self.local_variables.get(token,
-                    self.calculator.variables.get(token, Quantity(sp.Symbol(token))))
+                left = self.local_variables.get(token) or self.calculator.variables.get(token)
+                if left is None:
+                    left = Quantity(sp.Symbol(token))
         else:
             raise CalcError(f"Expected a number, variable, unit, or parenthesis; found '{token or 'end of input'}'.")
 
@@ -220,8 +231,7 @@ class Parser:
                 continue
             # Arithmetic binds before shifts, AND, XOR, and OR; all bind before
             # comparisons. Infix xor is recognized before implicit multiplication.
-            precedence = {"|": 6, "xor": 7, "&": 8, "<<": 9, ">>": 9,
-                          "+": 10, "-": 10, "*": 20, "/": 20, "%": 20, "^": 30, "**": 30}.get(token)
+            precedence = PRECEDENCE.get(token)
             implicit = False
             if precedence is None and (kind in ("number", "name") or token == "(") and not self.unit_only:
                 # Adjacent operands such as 2(x+1) imply multiplication.
@@ -253,8 +263,8 @@ class HistoryEntry:
 
 # Calculation engine: session variables, exact answers, and evaluation settings.
 class Calculator:
-    def __init__(self, mode="radian", precision=50, output_mode="exact"):
-        self.registry = UnitRegistry()
+    def __init__(self, mode="radian", precision=50, output_mode="exact", *, registry: UnitRegistry | None = None):
+        self.registry = registry if registry is not None else UnitRegistry()
         self.variables = {}
         self.equations = {}
         self.unchecked_equations: set[str] = set()
@@ -266,7 +276,10 @@ class Calculator:
         self.set_output_mode(output_mode)
 
     def set_mode(self, mode):
-        mode = {"rad": "radian", "deg": "degree"}.get(mode, mode)
+        if mode == "rad":
+            mode = "radian"
+        elif mode == "deg":
+            mode = "degree"
         if mode not in ("radian", "degree"):
             raise CalcError("Mode must be radian or degree.")
         self.mode = mode
@@ -297,17 +310,30 @@ class Calculator:
             raise CalcError(f"Cannot evaluate this expression: {exc}") from None
 
     def evaluate(self, text, record=True, *, approximate=False):
+        return self._evaluate(text, record, approximate)[0]
+
+    def calculate(self, text, *, approximate=False, record=True):
+        return self._evaluate(text, record, approximate, format_result=True)[1]
+
+    def _evaluate(self, text, record, approximate, *, format_result=False) -> tuple[Quantity, str]:
         # Failed input is recorded here; only successful evaluation updates ans.
         source = text.strip()
         try:
-            return self._evaluate(source, record, approximate)
+            value, assignment = self._evaluate_source(source)
+            result = self.format(value, approximate=approximate) if record or format_result else ""
+            if record:
+                self.history.append(HistoryEntry(decimal_literals(source, self.registry), result))
         except CalcError as exc:
             if record and source:
                 # Keep invalid input verbatim, including malformed numeric literals.
                 self.history.append(HistoryEntry(source, str(exc), is_error=True))
             raise
+        if assignment:
+            self.variables[assignment] = value
+        self.answer = value
+        return value, result
 
-    def _evaluate(self, source, record, approximate=False):
+    def _evaluate_source(self, source):
         # Peel off assignment and conversion arrows before parsing the expression.
         # This also permits a conversion followed by assignment, such as 3_in=>_ft->x.
         text = normalize_input(source)
@@ -336,13 +362,11 @@ class Calculator:
                 if target.constant:
                     raise CalcError("A physical constant is not a conversion target.")
             else:
-                try:
-                    parsed = Parser(self, target_text, unit_only=True).parse()
-                except (ValueError, TypeError, RecursionError) as exc:
-                    raise CalcError(str(exc)) from None
+                parsed = self.parse(target_text, unit_only=True)
                 if parsed.affine:
                     raise CalcError("Offset temperature units cannot appear in compound targets.")
-                if parsed.value.is_number is not True or parsed.value.is_positive is not True:
+                if (not isinstance(parsed.value, sp.Expr) or parsed.value.is_number is not True
+                        or parsed.value.is_positive is not True):
                     raise CalcError("A conversion target must have a positive numeric scale.")
                 target = Unit(target_text, "compound unit", "Compound", parsed.value, parsed.dims)
             if value.dims != target.dims:
@@ -351,18 +375,7 @@ class Calculator:
             value = replace(value, display=target)
         else:
             value = self.parse(text)
-        value.checked()
-        # Finish preparing history before committing the result to ans or a variable.
-        entry = HistoryEntry(decimal_literals(source, self.registry), self.format(value, approximate=approximate)) if record else None
-        if assignment:
-            self.variables[assignment] = value
-        self.answer = value
-        if entry is not None:
-            self.history.append(entry)
-        return value
-
-    def calculate(self, text, *, approximate=False, record=True):
-        return self.format(self.evaluate(text, record=record, approximate=approximate), approximate=approximate)
+        return value, assignment
 
     def define_equation(self, name, expression):
         """Validate a formula without changing ans, history, or session variables."""
@@ -408,17 +421,17 @@ class Calculator:
         if unit_key(name) in self.registry.units:
             raise CalcError(f"Unit _{name} already exists (unit names ignore case).")
         value = self.parse(expression)
-        if value.affine or value.value.free_symbols or value.value.is_positive is not True:
+        if (not isinstance(value.value, sp.Expr) or value.affine or value.value.free_symbols
+                or value.value.is_positive is not True):
             raise CalcError("Define a unit using a positive, finite, numeric quantity without a temperature offset.")
-        self.registry.add(name, "user-defined: " + expression, "Custom", value.value, value.dims)
         # Store the evaluated scale, so saved units do not depend on session variables.
         definition = self.registry.format(replace(value, display=None))
+        self.registry.add(name, "user-defined: " + expression, "Custom", value.value, value.dims)
         self.unit_definitions[name] = definition
 
     def function(self, name, args):
         # Validate argument counts and types before dispatching allowed SymPy operations.
-        arities = {"log": (1, 2), "diff": (2, 3), "integrate": (2, 4), "solve": (2,), "subs": (3,), "approx": (1, 2), "min": None, "max": None}
-        accepted = arities.get(name, (1,))
+        accepted = FUNCTION_ARITIES.get(name, (1,))
         if (accepted is None and not args) or (accepted is not None and len(args) not in accepted):
             raise CalcError(f"Wrong number of arguments for {name}.")
         if any(not isinstance(a.value, sp.Expr) for a in args):

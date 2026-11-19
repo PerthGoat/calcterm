@@ -318,6 +318,7 @@ class ExactArithmeticTests(unittest.TestCase):
         exact = self.calc.evaluate("pi").value
         self.assertFalse(exact.atoms(sp.Float))
         approximation = self.calc.evaluate("approx(pi,120)").value
+        assert isinstance(approximation, sp.Float)
         self.assertGreaterEqual(approximation._prec, 395)
         self.assertEqual(approximation, sp.N(sp.pi, 120))
         self.calc.set_precision(80)
