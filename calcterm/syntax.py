@@ -23,6 +23,8 @@ def expression_highlights(text) -> list[tuple[int, int, str]]:
         kind, token = match.lastgroup, match.group()
         if kind == "base":
             kind = "number"
+        elif kind == "root":
+            kind = "function"
         elif kind in ("op", "unicode") or token in BITWISE:
             kind = "operator"
         elif kind == "name":

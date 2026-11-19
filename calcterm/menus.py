@@ -17,6 +17,7 @@ SYMBOLS = [
     ("τ", "tau"), ("ω", "omega"), ("Δ", "delta (uppercase)"), ("Σ", "sigma (uppercase)"),
     ("Φ", "phi (uppercase)"), ("°", "degree sign"), ("Å", "angstrom"),
     ("→", "assignment arrow"), ("⇒", "conversion arrow"), ("×", "multiply"), ("÷", "divide"),
+    ("√", "square root"),
 ]
 
 

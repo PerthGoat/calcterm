@@ -140,6 +140,7 @@ closes it. Filtering the category list also searches the units inside each categ
 Right on a unit switches to F3 Constants, clearing the submenu and filter; this
 also works when the submenu filter has no matches. In any menu, Right opens a
 selected submenu when available, or otherwise switches to the next top menu.
+In a submenu, Up wraps from the first item to the last, and Down wraps from the last to the first.
 Submenus appear beside their parent when space permits, or over it in narrow terminals.
 F4 includes ε, μ, Ω, π, other Greek letters, °, Å, and
 arrows. Selection inserts the symbol at the input cursor. Terminal size must be at
@@ -405,6 +406,8 @@ Use parentheses to override precedence.
 Functions include `sqrt`, `cbrt`, `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `sinh`,
 `cosh`, `tanh`, `exp`, `ln`, `log`, `abs`, `floor`, `ceil`, `factorial`, `min`, `max`,
 `simplify`, `expand`, `factor`, `diff`, `integrate`, `solve`, `subs`, and `approx`.
+Use `√9` or `sqrt(9)` for a square root. Put a compound radicand in parentheses,
+as in `√(2+7)` or `√(x^2)`. The `√` symbol is in the Catalog and the default F4 Symbols menu.
 `log(x)` is base 10; `ln(x)` is natural log; `log(x,b)` sets another base.
 Inverse trig results follow the selected angle mode; hyperbolic functions do not.
 `diff(expression,variable,order)` supports higher derivatives.

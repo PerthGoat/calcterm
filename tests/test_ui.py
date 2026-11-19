@@ -1145,11 +1145,30 @@ class ConsoleTests(unittest.TestCase):
         self.app.handle_key("ENTER")
         self.assertEqual(self.app.text, "ε")
 
+    def test_submenu_arrows_wrap_and_keep_the_selection_visible(self):
+        self.app.handle_key("F2")
+        self.type_keys("length")
+        self.app.handle_key("ENTER")
+        for query in ("", "meter"):
+            with self.subTest(query=query):
+                self.type_keys(query)
+                items = self.app.menu_items()
+                self.assertGreater(len(items), 3)
+                for key, index in (("UP", len(items) - 1), ("DOWN", 0)):
+                    self.app.handle_key(key)
+                    self.assertEqual(self.app.menu_index, index)
+                    lines, selected, _ = self.app.frame(width=120, height=12)
+                    row, (first, last) = next(iter(selected.items()))
+                    self.assertIn(items[index]["label"], lines[row][first:last])
+
     def test_submenu_empty_filter_can_be_edited_and_closed(self):
         self.app.handle_key("F2")
         self.app.handle_key("ENTER")
         self.type_keys("xxxxx")
         self.assertFalse(self.app.menu_items())
+        self.app.handle_key("UP")
+        self.app.handle_key("DOWN")
+        self.assertEqual(self.app.menu_index, 0)
         self.app.handle_key("ENTER")
         self.assertEqual(self.app.text, "")
         self.assertEqual(len(self.app.menu_stack), 1)

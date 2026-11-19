@@ -19,9 +19,9 @@ class SyntaxTests(unittest.TestCase):
         self.app = ConsoleApp(config_path=Path(self.directory.name) / "settings.json")
 
     def test_numbers_functions_units_and_values_use_their_actual_token_boundaries(self):
-        source = "sqrt(1_000.5e-2)+y99(0hFF)+3_in=>_ft+ans+π+sinus+value0hFF"
+        source = "sqrt(1_000.5e-2)+y99(0hFF)+3_in=>_ft+ans+π+√2+sinus+value0hFF"
         tokens = [(source[first:last], kind) for first, last, kind in expression_highlights(source)]
-        for token in (("sqrt", "function"), ("y99", "function"), ("1_000.5e-2", "number"),
+        for token in (("sqrt", "function"), ("√", "function"), ("y99", "function"), ("1_000.5e-2", "number"),
                       ("0hFF", "number"), ("_in", "unit"), ("_ft", "unit"),
                       ("ans", "constant"), ("π", "constant")):
             self.assertIn(token, tokens)

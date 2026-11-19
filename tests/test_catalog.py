@@ -63,6 +63,17 @@ class CatalogTests(unittest.TestCase):
         self.assertIn("y1(x) - 4x", labels)
         self.assertGreater(len(items), 100)
 
+    def test_square_root_can_be_inserted_from_catalog_and_symbols_menu(self):
+        for picker in (self.open_from_help, lambda: self.app.handle_key("F4")):
+            self.app.clear_input()
+            picker()
+            self.type_keys("square root")
+            self.app.handle_key("ENTER")
+            self.assertEqual(self.app.text, "√")
+            self.type_keys("9")
+            self.app.handle_key("ENTER")
+            self.assertEqual(self.app.calculator.history[-1].line, "√9 = 3")
+
     def test_catalog_centers_large_popup_and_resizes_while_scrolled_to_the_end(self):
         self.open_from_help()
         self.app.handle_key("END")

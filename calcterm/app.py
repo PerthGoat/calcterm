@@ -375,7 +375,11 @@ class ConsoleApp(SessionStorage):
                     self.menu_index = 0 if key == "HOME" else max(0, len(items) - 1)
                 else:
                     delta = {"UP": -1, "DOWN": 1, "PAGEUP": -8, "PAGEDOWN": 8}[key]
-                    self.menu_index = max(0, min(len(items) - 1, self.menu_index + delta))
+                    index = self.menu_index + delta
+                    if self.menu_stack and items and key in ("UP", "DOWN"):
+                        self.menu_index = index % len(items)
+                    else:
+                        self.menu_index = max(0, min(len(items) - 1, index))
             elif key == "ENTER" and items:
                 item = items[self.menu_index]
                 if "items" in item:

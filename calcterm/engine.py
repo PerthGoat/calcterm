@@ -18,7 +18,7 @@ BASES = {"b": 2, "h": 16, "o": 8}
 BASE_LITERAL = re.compile(r"(?<!\w)0([bBhHoO])([^\W_]*(?:_[^\W_]+)*)", re.UNICODE)
 TOKEN = re.compile(rf"(?P<number>{DIGITS}/{DIGITS}(?=_°?[^\W\d_])|"
                    rf"(?:{DIGITS}(?:\.(?:{DIGITS})?)?|\.{DIGITS})(?:[eE][+-]?{DIGITS})?)|"
-                   r"(?P<unit>_°?[^\W\d_][^\W_]*)|(?P<name>[^\W\d_][^\W_]*)|"
+                   r"(?P<unit>_°?[^\W\d_][^\W_]*)|(?P<name>[^\W\d_][^\W_]*)|(?P<root>√)|"
                    r"(?P<op>\*\*|<<|>>|<=|>=|==|!=|[&|~<>=+\-*/^%(),!\[\]])", re.UNICODE)
 RESERVED = {"pi": sp.pi, "π": sp.pi, "e": sp.E, "E": sp.E, "i": sp.I, "I": sp.I,
             "True": sp.true, "False": sp.false}
@@ -139,6 +139,15 @@ class Parser:
         elif token == "~" and not self.unit_only:
             # NOT has the same precedence as unary signs, below exponentiation.
             left = self.expression(25).bitwise("~")
+        elif kind == "root" and not self.unit_only:
+            if self.peek()[1] == "(":
+                self.take()
+                argument = self.expression()
+                self.expect(")")
+            else:
+                # An unparenthesized operand includes suffixes and stops before infix powers.
+                argument = self.expression(PRECEDENCE["^"] + 1)
+            left = self.calculator.function("sqrt", [argument])
         elif token == "(":
             left = self.expression()
             self.expect(")")
@@ -233,7 +242,7 @@ class Parser:
             # comparisons. Infix xor is recognized before implicit multiplication.
             precedence = PRECEDENCE.get(token)
             implicit = False
-            if precedence is None and (kind in ("number", "name") or token == "(") and not self.unit_only:
+            if precedence is None and (kind in ("number", "name", "root") or token == "(") and not self.unit_only:
                 # Adjacent operands such as 2(x+1) imply multiplication.
                 precedence, token, implicit = 20, "*", True
             if precedence is None or precedence < minimum:

@@ -254,6 +254,17 @@ class ExactArithmeticTests(unittest.TestCase):
         self.assertEqual(self.calc.calculate("2×3−4÷2"), "4")
         self.assertEqual(self.calc.calculate("(2+3)²"), "25")
 
+    def test_unicode_square_root(self):
+        for source, expected in (("√9", "3"), ("√2", "sqrt(2)"), ("√(2+7)", "3"),
+                                 ("2√9+1", "7"), ("√√16", "2"), ("√(9)!", "6"),
+                                 ("√0h10", "4"), ("√9_m^2=>_m", "3_m"), ("√(9)_m", "3_m")):
+            with self.subTest(source=source):
+                self.assertEqual(self.calc.calculate(source), expected)
+                self.assertEqual(self.calc.history[-1].source, source.replace("0h10", "16"))
+        for source in ("√", "√()", "√(1,2)", "1=>√4"):
+            with self.subTest(source=source), self.assertRaises(CalcError):
+                self.calc.calculate(source)
+
     def test_ans(self):
         self.calc.evaluate("1/3")
         self.assertEqual(self.calc.calculate("3*ans"), "1")
