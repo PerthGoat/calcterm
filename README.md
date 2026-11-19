@@ -127,8 +127,9 @@ their insertion behavior. The mode starts off when the app opens.
 
 The bottom status bar has fixed slots: `ProblemName | ↑ | INS | RADIAN`. The INS slot
 stays blank when insertion mode is off. On Windows, the arrow appears while Shift is
-physically held and its slot stays blank when released, keeping the layout stable.
-It updates even without another key
+physically held and the calculator's PowerShell/terminal window is focused. Its slot
+stays blank when Shift is released or the window loses focus, keeping the layout stable.
+The alternate F-key labels follow the same focus rule. The indicator updates even without another key
 press and is also shown in the equation editor and table. Other platforms keep it
 hidden because ordinary terminal input does not reliably report bare Shift releases.
 

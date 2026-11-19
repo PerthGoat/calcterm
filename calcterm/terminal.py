@@ -41,6 +41,28 @@ def windows_shift_pressed():
     return bool(user32.GetAsyncKeyState(0x10) & 0x8000)
 
 
+def windows_console_focused():
+    """Check this console's window, including its Windows Terminal owner."""
+    import ctypes
+    from ctypes import wintypes
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    kernel32.GetConsoleWindow.argtypes = []
+    kernel32.GetConsoleWindow.restype = wintypes.HWND
+    user32.GetForegroundWindow.argtypes = []
+    user32.GetForegroundWindow.restype = wintypes.HWND
+    user32.GetAncestor.argtypes = [wintypes.HWND, wintypes.UINT]
+    user32.GetAncestor.restype = wintypes.HWND
+
+    console = kernel32.GetConsoleWindow()
+    foreground = user32.GetForegroundWindow()
+    if not console or not foreground:
+        return False
+    # Windows Terminal owns its hidden ConPTY console window.
+    return foreground == console or foreground == user32.GetAncestor(console, 3)  # GA_ROOTOWNER
+
+
 def modified_terminal_key(sequence):
     """Decode CSI-u or xterm modifyOtherKeys reports for character keys."""
     match = re.fullmatch(r"\x1b\[(\d+);(\d+)u", sequence)
@@ -211,4 +233,5 @@ class Terminal:
     def read_shift_state(self):
         # POSIX character reports do not provide reliable standalone modifier releases.
         # Do not infer a held key from the last Shift shortcut, which could stick on.
-        return windows_shift_pressed() if os.name == "nt" else False
+        # Only display held modifiers while this console's window is focused.
+        return (windows_console_focused() and windows_shift_pressed()) if os.name == "nt" else False

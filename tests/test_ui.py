@@ -1566,13 +1566,49 @@ class ConsoleTests(unittest.TestCase):
 
     def test_live_shift_poll_uses_windows_state_and_does_not_guess_from_posix_shortcuts(self):
         terminal = Terminal()
-        with patch("os.name", "nt"), patch("calcterm.terminal.windows_shift_pressed", side_effect=[True, False]):
+        with patch("os.name", "nt"), \
+                patch("calcterm.terminal.windows_console_focused", return_value=True), \
+                patch("calcterm.terminal.windows_shift_pressed", side_effect=[True, False]):
             self.assertTrue(terminal.read_shift_state())
             self.assertFalse(terminal.read_shift_state())
-        with patch("os.name", "posix"), patch("calcterm.terminal.windows_shift_pressed") as native_state:
+        with patch("os.name", "posix"), \
+                patch("calcterm.terminal.windows_console_focused") as native_focus, \
+                patch("calcterm.terminal.windows_shift_pressed") as native_state:
             self.app.handle_key("SHIFT_RIGHT")
             self.assertFalse(terminal.read_shift_state())
+            native_focus.assert_not_called()
             native_state.assert_not_called()
+
+    def test_shift_poll_ignores_shift_held_in_another_window(self):
+        with patch("os.name", "nt"), \
+                patch("calcterm.terminal.windows_console_focused", return_value=False), \
+                patch("calcterm.terminal.windows_shift_pressed", return_value=True) as native_state:
+            self.assertFalse(Terminal().read_shift_state())
+            native_state.assert_not_called()
+
+    def test_focus_loss_and_regain_redraw_held_shift_without_input(self):
+        terminal = Terminal()
+        frames = []
+        frame = self.app.frame
+
+        def capture(width, height):
+            result = frame(width, height)
+            frames.append(result[0])
+            return result
+
+        with patch("os.name", "nt"), \
+                patch("sys.stdout", new_callable=io.StringIO), \
+                patch("shutil.get_terminal_size", return_value=(80, 24)), \
+                patch.object(terminal, "read_key", side_effect=[None, None, None, None, "CTRL_C"]), \
+                patch("calcterm.terminal.windows_console_focused", side_effect=[True, False, False, True, True]), \
+                patch("calcterm.terminal.windows_shift_pressed", side_effect=[True, True, False]), \
+                patch.object(self.app, "frame", side_effect=capture):
+            terminal.run(self.app)
+        self.assertEqual([lines[-2].split(" | ")[1] for lines in frames], ["↑", " ", "↑", " "])
+        self.assertEqual(["F7 Graph" in lines[0] for lines in frames], [True, False, True, False])
+        self.assertFalse(self.app.shift_pressed)
+        self.assertEqual(self.app.text, "")
+        self.assertFalse(self.app.calculator.history)
 
     def test_resize_to_small_terminal_clears_old_rows(self):
         terminal = Terminal()
