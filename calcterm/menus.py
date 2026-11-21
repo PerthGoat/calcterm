@@ -6,6 +6,7 @@ import unicodedata
 
 from .core import CalcError, unit_key
 from .engine import EQUATION_NAMES, FUNCTIONS, RESERVED, TRANSLATE
+from .math_menu_data import MATH_MENU
 
 
 # Menus are plain data: an item inserts text, runs a ':' command, or has child items.
@@ -23,6 +24,39 @@ SYMBOLS = [
 
 def insert_item(label, text):
     return {"label": label, "insert": text}
+
+
+def math_item_kind(entry):
+    # The reference describes Data▶Mat and Mat▶Data with command syntax.
+    if entry["kind"] == "function" and not entry["function"].endswith("("):
+        return "command"
+    return entry["kind"]
+
+
+def math_menu():
+    def build(entry):
+        key = {"key": entry["key"]}
+        if "items" in entry:
+            return {**key, "label": entry["name"], "items": [build(item) for item in entry["items"]]}
+        token = entry["function"]
+        if math_item_kind(entry) == "command" and entry["syntax"] != token:
+            token += " "
+        elif token in ("and", "or", "xor", "∠"):
+            token = f" {token} "
+        elif token == "not":
+            token += " "
+        return {**key, **insert_item(entry["function"], token)}
+
+    return {"label": "Math", "items": [build(entry) for entry in MATH_MENU]}
+
+
+def upgrade_math_menu(menu):
+    legacy = [insert_item(name, name + "(") for name in
+              ("sqrt", "sin", "cos", "tan", "ln", "log", "abs", "simplify", "expand", "factor",
+               "diff", "integrate", "solve", "subs", "approx")]
+    legacy += [insert_item("pi", "π"), insert_item("Assign ->", "->"), insert_item("Convert =>", "=>")]
+    if menu["label"] == "Math" and menu["items"][:len(legacy)] == legacy:
+        menu["items"] = math_menu()["items"] + menu["items"][len(legacy):]
 
 
 def symbol_menu_items():
@@ -116,6 +150,15 @@ def catalog_items(calculator, menus):
         kind = "constant" if unit.constant else "unit"
         entries[unit.notation] = insert_item(f"{unit.label} ({unit.notation}) - {kind}", unit.notation)
 
+    def reference_entries(reference, items):
+        for entry, item in zip(reference, items):
+            if "items" in entry:
+                reference_entries(entry["items"], item["items"])
+            else:
+                entries[item["insert"]] = insert_item(f"{entry['syntax']} - {math_item_kind(entry)}", item["insert"])
+
+    reference_entries(MATH_MENU, math_menu()["items"])
+
     def custom_symbols(items):
         for item in items:
             if "items" in item:
@@ -134,9 +177,7 @@ def default_menus(registry):
     units = sorted((u for u in registry.units.values() if not u.constant), key=lambda u: (u.category, u.name))
     constants = [u for u in registry.units.values() if u.constant]
     return [
-        {"label": "Math", "items": [insert_item(n, n + "(") for n in
-         ("sqrt", "sin", "cos", "tan", "ln", "log", "abs", "simplify", "expand", "factor", "diff", "integrate", "solve", "subs", "approx")]
-         + [insert_item("pi", "π"), insert_item("Assign ->", "->"), insert_item("Convert =>", "=>")]},
+        math_menu(),
         {"label": "Units", "items": categorize_unit_items(registry, [insert_item(f"{u.notation} {u.label}", u.notation) for u in units])
          + [insert_item("Define a unit", ":unit smoot = 1.7018_m")]},
         {"label": "Constants", "items": [insert_item(u.notation + " " + u.label, u.notation) for u in constants]},
@@ -174,9 +215,13 @@ def validate_menus(menus):
             actions = [key for key in ("insert", "command", "items") if key in item]
             if len(actions) != 1:
                 raise CalcError("Each item needs exactly one action: insert, command, or submenu items.")
+            key = item.get("key")
+            if key is not None and (not isinstance(key, str) or len(key) != 1
+                                    or key not in "123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ"):
+                raise CalcError("A quick-select key must be 1–9 or A–Z.")
             action = actions[0]
             if action == "items":
-                items.append({"label": item["label"], "items": validate_items(item["items"], depth + 1)})
+                items.append({**item, "items": validate_items(item["items"], depth + 1)})
                 continue
             if not isinstance(item[action], str):
                 raise CalcError("Insert and command actions must be strings.")
@@ -216,6 +261,7 @@ HELP_LINES = [
     "In IO output focus: Home/End: first/latest output; F10/Esc: return to calculator.",
     "F6 > Catalog: all functions/symbols; type to filter; Enter inserts; Esc closes.",
     "Type in a menu to filter; Backspace removes a filter character.",
+    "Math quick-select: press the listed digit, or Tab then the listed letter, with an empty filter.",
     "Submenus: Enter/Right opens; Right on a leaf switches menus; Left/Esc goes back.",
     "3->x assigns x; x/X differ; _ft/_FT are the same unit.",
     "Comparisons: < > <= >= = == != return True or False; 3>6 is False.",

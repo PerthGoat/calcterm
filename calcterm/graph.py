@@ -4,7 +4,7 @@ from dataclasses import dataclass
 import math
 import sys
 
-from .core import CalcError, Quantity, ZERO, expression_text, sp
+from .core import CalcError, Quantity, ZERO, expression_text, is_scalar, sp
 from .editing import edit_text
 
 
@@ -17,7 +17,7 @@ def graph_number(calculator, source, label):
     if not isinstance(source, str):
         raise CalcError(f"Graph {label} must be a numeric expression.")
     value = calculator.parse(source)
-    if (not isinstance(value.value, sp.Expr) or value.dims != ZERO
+    if (not is_scalar(value.value) or value.dims != ZERO
             or value.value.is_number is not True or value.value.is_real is not True):
         raise CalcError(f"Graph {label} must be a finite real number without units.")
     try:
@@ -101,7 +101,7 @@ class GraphView:
     def _value(calculator, name, x):
         try:
             result = calculator.equation(name, [Quantity(sp.Float(x, 17))])
-            if result.dims != ZERO or not isinstance(result.value, sp.Expr):
+            if result.dims != ZERO or not is_scalar(result.value):
                 return None
             value = float(result.value)
             return value if math.isfinite(value) else None

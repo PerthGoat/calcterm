@@ -1,0 +1,321 @@
+# built-in Algebra menu. UTF-8 YAML. Optional arguments use [] notation.
+schema_version: '1.0'
+title: F3 Algebra menu function reference
+notes:
+- The identical functions are also accessible through MATH > 9:Algebra.
+- Each `key` is the item selector in its CURRENT menu. Submenus 9:Trig, A:Complex, and B:Extract each have their
+  own numbered selectors.
+- The Algebra > Trig submenu contains tExpand and tCollect. It is distinct from the native MATH > A:Trig menu for
+  sin, cos, tan, etc.
+- A `function` value ending with ( represents the calculator token inserted by selecting the item. Square brackets
+  in argument descriptions mark optional arguments.
+- Descriptions summarize standard behavior. CAS results, domains and supported overloads depend on the input and
+  mode
+quick_select_policy:
+  sequence: 1 2 3 4 5 6 7 8 9 A B C ...
+  key_scope: current_open_menu
+  letter_entry: ALPHA + letter when required
+  submenu_navigation: Selecting a submenu item opens its own menu rather than inserting a function.
+  path_semantics: Ordered selection sequence beginning at F3 on the Home screen (or alternate_path beginning at
+    MATH 9).
+menus:
+- key: F3
+  name: Algebra
+  kind: menu
+  path:
+  - F3
+  description: F3 Algebra menu. The same Algebra entries are available from
+    MATH > 9:Algebra.
+  items:
+  - key: '1'
+    function: solve(
+    kind: function
+    path:
+    - F3
+    - '1'
+    arguments: equationOrInequality, variable
+    syntax: solve(equationOrInequality, variable)
+    description: Solves equations or systems symbolically for real values of the specified variable(s); also supports
+      some inequalities. Use cSolve for complex solutions.
+    alternate_path:
+    - MATH
+    - '9'
+    - '1'
+  - key: '2'
+    function: factor(
+    kind: function
+    path:
+    - F3
+    - '2'
+    arguments: expression[, variable]
+    syntax: factor(expression[, variable])
+    description: Factors an integer, rational expression, or polynomial; an optional variable limits factoring to
+      that variable.
+    alternate_path:
+    - MATH
+    - '9'
+    - '2'
+  - key: '3'
+    function: expand(
+    kind: function
+    path:
+    - F3
+    - '3'
+    arguments: expression[, variable]
+    syntax: expand(expression[, variable])
+    description: Expands products, powers, and rational expressions symbolically. The optional variable enables
+      partial expansion in that variable.
+    alternate_path:
+    - MATH
+    - '9'
+    - '3'
+  - key: '4'
+    function: zeros(
+    kind: function
+    path:
+    - F3
+    - '4'
+    arguments: expression, variable
+    syntax: zeros(expression, variable)
+    description: Returns a list of candidate real values of a variable that make the given expression equal to zero.
+    alternate_path:
+    - MATH
+    - '9'
+    - '4'
+  - key: '5'
+    function: approx(
+    kind: function
+    path:
+    - F3
+    - '5'
+    arguments: expression
+    syntax: approx(expression)
+    description: Evaluates an expression using floating-point approximation where possible, rather than retaining
+      exact symbolic form.
+    alternate_path:
+    - MATH
+    - '9'
+    - '5'
+  - key: '6'
+    function: comDenom(
+    kind: function
+    path:
+    - F3
+    - '6'
+    arguments: rationalExpression[, variable]
+    syntax: comDenom(rationalExpression[, variable])
+    description: Combines an expression into a single reduced fraction using a common denominator; optional variable
+      controls collection of like powers.
+    alternate_path:
+    - MATH
+    - '9'
+    - '6'
+  - key: '7'
+    function: propFrac(
+    kind: function
+    path:
+    - F3
+    - '7'
+    arguments: rationalExpression[, variable]
+    syntax: propFrac(rationalExpression[, variable])
+    description: Separates a rational expression into polynomial/integer and proper-fraction parts; optional variable
+      specifies the polynomial variable.
+    alternate_path:
+    - MATH
+    - '9'
+    - '7'
+  - key: '8'
+    function: nSolve(
+    kind: function
+    path:
+    - F3
+    - '8'
+    arguments: equation, variableOrVariableEqualsGuess
+    syntax: nSolve(equation, variableOrVariableEqualsGuess)
+    description: Numerically searches for one approximate real solution of an equation. Supply a variable (x) or
+      an initial guess (x=1); may return "no solution found".
+    alternate_path:
+    - MATH
+    - '9'
+    - '8'
+  - key: '9'
+    name: Trig
+    kind: submenu
+    path:
+    - F3
+    - '9'
+    description: Built-in symbolic trig transformation submenu (not the main MATH > A:Trig function menu).
+    items:
+    - key: '1'
+      function: tExpand(
+      kind: function
+      path:
+      - F3
+      - '9'
+      - '1'
+      arguments: expression
+      syntax: tExpand(expression)
+      description: Expands trig functions of angle sums, differences and multiples using trigonometric identities;
+        best used in Radian mode.
+      alternate_path:
+      - MATH
+      - '9'
+      - '9'
+      - '1'
+    - key: '2'
+      function: tCollect(
+      kind: function
+      path:
+      - F3
+      - '9'
+      - '2'
+      arguments: expression
+      syntax: tCollect(expression)
+      description: Rewrites products and integer powers of trig functions as combinations of trig functions of sums,
+        differences and multiple angles; roughly reverses tExpand.
+      alternate_path:
+      - MATH
+      - '9'
+      - '9'
+      - '2'
+    alternate_path:
+    - MATH
+    - '9'
+    - '9'
+  - key: A
+    name: Complex
+    kind: submenu
+    path:
+    - F3
+    - A
+    description: Built-in algebraic solving, factoring, and zeros over the complex numbers.
+    items:
+    - key: '1'
+      function: cSolve(
+      kind: function
+      path:
+      - F3
+      - A
+      - '1'
+      arguments: equation, variable
+      syntax: cSolve(equation, variable)
+      description: Returns candidate real and non-real solutions to an equation for the specified variable, allowing
+        complex solutions even when Complex Format is REAL.
+      alternate_path:
+      - MATH
+      - '9'
+      - A
+      - '1'
+    - key: '2'
+      function: cFactor(
+      kind: function
+      path:
+      - F3
+      - A
+      - '2'
+      arguments: expression[, variable]
+      syntax: cFactor(expression[, variable])
+      description: Factors an expression over the complex numbers, potentially introducing non-real factors; optional
+        variable chooses a variable to factor with respect to.
+      alternate_path:
+      - MATH
+      - '9'
+      - A
+      - '2'
+    - key: '3'
+      function: cZeros(
+      kind: function
+      path:
+      - F3
+      - A
+      - '3'
+      arguments: expression, variable
+      syntax: cZeros(expression, variable)
+      description: Returns a list of candidate real and non-real zeros of an expression with respect to the specified
+        variable.
+      alternate_path:
+      - MATH
+      - '9'
+      - A
+      - '3'
+    alternate_path:
+    - MATH
+    - '9'
+    - A
+  - key: B
+    name: Extract
+    kind: submenu
+    path:
+    - F3
+    - B
+    description: Built-in numerator/denominator extraction and equation/inequality side extraction.
+    items:
+    - key: '1'
+      function: getNum(
+      kind: function
+      path:
+      - F3
+      - B
+      - '1'
+      arguments: expression
+      syntax: getNum(expression)
+      description: Combines expression over a reduced common denominator and returns the resulting numerator.
+      alternate_path:
+      - MATH
+      - '9'
+      - B
+      - '1'
+    - key: '2'
+      function: getDenom(
+      kind: function
+      path:
+      - F3
+      - B
+      - '2'
+      arguments: expression
+      syntax: getDenom(expression)
+      description: Combines expression over a reduced common denominator and returns the resulting denominator.
+      alternate_path:
+      - MATH
+      - '9'
+      - B
+      - '2'
+    - key: '3'
+      function: left(
+      kind: function
+      path:
+      - F3
+      - B
+      - '3'
+      arguments: equationOrInequality
+      syntax: left(equationOrInequality)
+      description: Returns the left-hand side of an equation or inequality; other overloads exist for lists and
+        strings.
+      alternate_path:
+      - MATH
+      - '9'
+      - B
+      - '3'
+    - key: '4'
+      function: right(
+      kind: function
+      path:
+      - F3
+      - B
+      - '4'
+      arguments: equationOrInequality
+      syntax: right(equationOrInequality)
+      description: Returns the right-hand side of an equation or inequality; other overloads exist for lists and
+        strings.
+      alternate_path:
+      - MATH
+      - '9'
+      - B
+      - '4'
+    alternate_path:
+    - MATH
+    - '9'
+    - B
+  alternate_path:
+  - MATH
+  - '9'

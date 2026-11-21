@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 
 from .core import BITWISE
-from .engine import EQUATION_NAMES, FUNCTIONS, RESERVED, TOKEN
+from .engine import COMMANDS, EQUATION_NAMES, FUNCTIONS, MATH_WORD_OPERATORS, RESERVED, TOKEN
 from .graph import GRAPH_COLORS
 
 
@@ -21,15 +21,17 @@ def expression_highlights(text) -> list[tuple[int, int, str]]:
     spans: list[tuple[int, int, str]] = []
     for match in SYNTAX_TOKEN.finditer(text):
         kind, token = match.lastgroup, match.group()
-        if kind == "base":
+        if kind in ("base", "dms"):
             kind = "number"
         elif kind == "root":
             kind = "function"
-        elif kind in ("op", "unicode") or token in BITWISE:
+        elif kind in ("op", "unicode") or token in BITWISE or token in MATH_WORD_OPERATORS:
             kind = "operator"
         elif kind == "name":
             if token in FUNCTIONS or token in EQUATION_NAMES:
                 kind = "function"
+            elif token in COMMANDS and not text[:match.start()].strip():
+                kind = "command"
             elif token in RESERVED or token == "ans":
                 kind = "constant"
             else:

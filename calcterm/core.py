@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+import json
 import operator
 import sys
 import unicodedata
@@ -16,6 +17,9 @@ try:
 except ImportError:
     raise SystemExit("SymPy is required. Run: python -m pip install -r requirements.txt")
 
+from sympy.core.symbol import Str
+from sympy.printing.str import StrPrinter
+
 
 class CalcError(ValueError):
     """An input or configuration error suitable for displaying in the UI."""
@@ -27,6 +31,10 @@ COMPARISONS = {"<": sp.Lt, ">": sp.Gt, "<=": sp.Le, ">=": sp.Ge,
 # Keep ^ as exponentiation; the word xor supplies bitwise exclusive OR instead.
 BITWISE = {"&": operator.and_, "|": operator.or_, "xor": operator.xor,
            "<<": operator.lshift, ">>": operator.rshift}
+
+
+def is_scalar(value):
+    return isinstance(value, sp.Expr) and not isinstance(value, sp.MatrixExpr)
 
 
 # Quantities track powers of the seven SI base dimensions in a fixed order:
@@ -75,6 +83,8 @@ class Quantity:
     value: sp.Basic
     dims: tuple = ZERO
     display: Unit | None = None
+    presentation: str | None = None
+    coordinates: tuple[str, sp.Expr] | None = None
 
     def checked(self):
         # Check intermediate results too, so undefined values cannot cancel away later.
@@ -88,16 +98,16 @@ class Quantity:
         return self.display is not None and self.display.offset != 0
 
     def negate(self):
-        if not isinstance(self.value, sp.Expr):
+        if not is_scalar(self.value):
             raise CalcError("Negation requires a scalar expression.")
         # A leading minus on -40_°C refers to its temperature coordinate.
         if self.display is not None and self.affine:
             return replace(self, value=sp.Add(sp.Mul(2, self.display.offset), sp.Mul(-1, self.value)))
-        return replace(self, value=sp.Mul(-1, self.value))
+        return replace(self, value=sp.Mul(-1, self.value), presentation=None)
 
     def arithmetic(self, op, other):
         # Binary arithmetic operators keep values and dimensions aligned here.
-        if not isinstance(self.value, sp.Expr) or not isinstance(other.value, sp.Expr):
+        if not is_scalar(self.value) or not is_scalar(other.value):
             raise CalcError("Arithmetic requires scalar expressions.")
         if op in ("+", "-"):
             if self.dims != other.dims:
@@ -166,7 +176,7 @@ class Quantity:
         # Values already share SI coordinates, so compatible units compare directly.
         equality = op in ("=", "==", "!=")
         for value in (self.value, other.value):
-            if not isinstance(value, sp.Expr) and not (equality and value in (sp.true, sp.false)):
+            if not is_scalar(value) and not (equality and value in (sp.true, sp.false)):
                 raise CalcError("Comparisons require scalar expressions (or booleans for equality).")
         if self.dims != other.dims:
             raise CalcError("Cannot compare quantities with different dimensions.")
@@ -181,18 +191,31 @@ class Quantity:
 
 
 # Result formatting preserves exact values unless approximation was requested.
+class CalculatorPrinter(StrPrinter):
+    def _print_log(self, value):
+        if len(value.args) == 1:
+            return f"ln({self._print(value.args[0])})"
+        return self._print_Function(value)
+
+
 def expression_text(value, full_prec: bool | str = "auto"):
     # Use calculator syntax for powers and solution lists so results can be recalled.
     if isinstance(value, sp.Tuple):
         return "[" + ", ".join(expression_text(x, full_prec) for x in value) + "]"
-    return sp.sstr(value, full_prec=full_prec).replace("**", "^")
+    if isinstance(value, sp.MatrixBase):
+        return expression_text(sp.Tuple(*(sp.Tuple(*row) for row in value.tolist())), full_prec)
+    if isinstance(value, Str):
+        return json.dumps(value.name, ensure_ascii=False)
+    return CalculatorPrinter({"full_prec": full_prec}).doprint(value).replace("**", "^")
 
 
 def approximate_value(value, precision):
     # Approximate a copy for output; stored quantities and variables remain unchanged.
     if isinstance(value, sp.Tuple):
         return sp.Tuple(*(approximate_value(item, precision) for item in value))
-    if value in (sp.true, sp.false):
+    if isinstance(value, sp.MatrixBase):
+        return value.applyfunc(lambda item: approximate_value(item, precision))
+    if value in (sp.true, sp.false) or isinstance(value, Str) or not isinstance(value, sp.Expr):
         return value
     # Keep integers intact and respect the precision of explicit approx(...) values.
     if isinstance(value, (sp.Integer, sp.Float)) or value is sp.I:
@@ -391,6 +414,8 @@ class UnitRegistry:
             self.add(name, label, "Constants", value, dims, constant=True)
 
     def format(self, quantity, precision=None):
+        if quantity.presentation is not None:
+            return quantity.presentation
         # Prefer the requested display unit, then a matching SI unit if one exists.
         unit = quantity.display
         if unit and unit.constant:

@@ -3,8 +3,7 @@
 `calc_term.py` is a Python terminal application with six configurable dropdown menus,
 a y1–y99 equation editor, a history panel that fills the terminal, an editable input line,
 and a status bar. It runs on
-Windows, macOS, and Linux. Python 3.10 or newer and SymPy are required; SymPy is the
-only direct external dependency (it installs mpmath for arbitrary-precision evaluation).
+Windows, macOS, and Linux. It requires Python 3.10 or newer and SymPy.
 
 Install and run from this directory:
 
@@ -21,7 +20,8 @@ If using this project's existing Windows virtual environment:
 ```
 
 The interactive UI needs a terminal that supports ANSI output. Windows Terminal and
-modern Windows console hosts support it. Use `--plain` in a basic terminal or pipe;
+modern Windows console hosts support it. Windows Terminal also renders the Math
+menu glyphs when the classic console font lacks them. Use `--plain` in a basic terminal or pipe;
 redirected input/output selects plain mode automatically. Quit using `:quit`, Ctrl+C,
 or Ctrl+D. The interactive app restores the terminal when it exits.
 
@@ -53,12 +53,13 @@ imports available. Implementation lives in the `calcterm` package:
 | `io.py` | Session IO transcript, wrapping, and scrollback |
 | `syntax.py` | Expression highlighting and ANSI colors |
 | `menus.py` | Menus, catalog entries, validation, and keyboard help |
+| `math_menu_data.py` | Built-in Math menu definitions and reference metadata |
 | `storage.py` | Configuration, backups, history, and saved Problems |
 | `app.py` | UI state, editing, dialogs, and frame layout |
 | `terminal.py` | Windows/POSIX keyboard input and terminal rendering |
 
-Run the app using the same commands as before. Keep `calcterm/` beside
-`calc_term.py`; configuration and saved data still live beside the entry script.
+Keep `calcterm/` beside `calc_term.py`. Configuration and saved data live beside
+the entry script.
 
 ## Keyboard
 
@@ -137,7 +138,9 @@ press and is also shown in the equation editor and table. Other platforms keep i
 hidden because ordinary terminal input does not reliably report bare Shift releases.
 
 In a dropdown, use Up/Down and Enter to choose an item. Type to filter its labels;
-Backspace edits the filter. In F2, choose a unit category with Enter or Right, then
+Backspace edits the filter. In **F1 Math**, press a listed digit to select it directly.
+For a letter shortcut, press Tab and then the letter. Quick-select applies to the
+open submenu when its filter is empty. In F2, choose a unit category with Enter or Right, then
 choose its unit with Enter. Left or Esc returns to the category list; Esc again
 closes it. Filtering the category list also searches the units inside each category.
 Right on a unit switches to F3 Constants, clearing the submenu and filter; this
@@ -148,6 +151,14 @@ Submenus appear beside their parent when space permits, or over it in narrow ter
 F4 includes ε, μ, Ω, π, other Greek letters, °, Å, and
 arrows. Selection inserts the symbol at the input cursor. Terminal size must be at
 least 40 columns by 12 rows.
+
+F1 Math is built into the Python package and includes the Matrix, Statistics, and
+Algebra submenus. The [YAML example](example_files/math_menu.yaml) documents its
+layout and syntax. Selecting a function or command inserts
+its syntax at the cursor. For example, `det([[1,2],[3,4]])` uses a matrix of rows,
+`sin(90°)` supplies explicit angle units, and `LinReg [1,2,3],[3,5,7]` fits a line.
+`ShowStat` opens the latest statistics or regression summary in the scrollable IO
+view. The built-in Math menu is updated when an older stock configuration loads.
 
 **F9 Clean Up** contains **Clear set variables**, which makes assigned names symbolic
 again, and **Clear history**, which clears the current Problem's saved history.

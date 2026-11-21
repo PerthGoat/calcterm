@@ -9,7 +9,7 @@ from typing import NamedTuple
 import unicodedata
 
 from .commands import CommandProcessor
-from .core import CalcError, Quantity, ZERO, expression_text, sp
+from .core import CalcError, Quantity, ZERO, expression_text, is_scalar, sp
 from .editing import edit_text, insert_text_at_cursor
 from .engine import Calculator, EQUATION_NAMES, HistoryEntry
 from .graph import GRAPH_COLORS, GRAPH_MARKERS, GraphView
@@ -89,6 +89,7 @@ class ConsoleApp(SessionStorage):
         self.open_menu = None
         self.menu_index = 0
         self.menu_filter = ""
+        self.menu_quick_select = False
         self.menu_stack: list[tuple[dict, int, str]] = []
         self.equation_open = False
         self.equation_index = 0
@@ -243,9 +244,11 @@ class ConsoleApp(SessionStorage):
         self.menu_stack.append((item, self.menu_index, self.menu_filter))
         self.menu_index = 0
         self.menu_filter = ""
+        self.menu_quick_select = False
 
     def close_submenu(self):
         _, self.menu_index, self.menu_filter = self.menu_stack.pop()
+        self.menu_quick_select = False
 
     def command(self, text, *, record_output=False):
         record_output = record_output and not self.io_open
@@ -284,9 +287,17 @@ class ConsoleApp(SessionStorage):
                 result = self.calculator.calculate(self.text, approximate=approximate, record=not self.io_open)
                 self.message = (HistoryEntry(self.text.strip(), result).line if self.io_open else
                                 self.calculator.history[-1].line)
-                self.io.append(result)
+                show_statistics = self.text.strip() == "ShowStat"
+                if show_statistics:
+                    self.io.append("Statistics\n" + "\n".join(
+                        f"{key} = {expression_text(value)}" for key, value in self.calculator.statistics.items()))
+                else:
+                    self.io.append(result)
                 if not self.io_open:
                     self.save_history()
+                    if show_statistics:
+                        self.switch_view("F10")
+                        self.io_focus_input = False
                 self.select_all_input()
             self.history_index = None
         except (CalcError, OSError) as exc:
@@ -310,6 +321,7 @@ class ConsoleApp(SessionStorage):
         if self.equation_open and not self.commit_equation():
             return
         previous_menu = self.open_menu
+        self.menu_quick_select = False
         self.open_menu = None
         self.menu_stack.clear()
         self.help_open = False
@@ -424,6 +436,17 @@ class ConsoleApp(SessionStorage):
             return
         if self.open_menu is not None:
             items = self.menu_items()
+            if key == "TAB" and not self.menu_filter and any(item.get("key", "").isalpha() for item in items):
+                self.menu_quick_select = not self.menu_quick_select
+                return
+            quick_select = self.menu_quick_select
+            self.menu_quick_select = False
+            if not self.menu_filter and len(key) == 1 and (key.isdigit() or quick_select):
+                for index, item in enumerate(items):
+                    if item.get("key") == key.upper():
+                        self.menu_index = index
+                        key = "ENTER"
+                        break
             if key in ("ESC", "LEFT") and self.menu_stack:
                 self.close_submenu()
             elif key == "ESC":
@@ -656,7 +679,7 @@ class ConsoleApp(SessionStorage):
             if not isinstance(source, str):
                 raise CalcError(f"Table {label.lower()} must be a numeric expression.")
             value = calculator.parse(source)
-            if (not isinstance(value.value, sp.Expr) or value.dims != ZERO
+            if (not is_scalar(value.value) or value.dims != ZERO
                     or value.value.is_number is not True or value.value.is_real is not True
                     or sp.ask(sp.Q.finite(value.value)) is not True):
                 raise CalcError(f"Table {label.lower()} must be a finite real number without units.")
@@ -1234,6 +1257,8 @@ class ConsoleApp(SessionStorage):
                 heading = " > ".join(level["label"] for level in levels[:depth + 1])
                 if menu_filter:
                     heading += " | filter: " + menu_filter
+                elif depth == len(levels) - 1 and self.menu_quick_select:
+                    heading += " | Quick-select"
                 panel, first = menu_panel(items, heading, menu_index, width, height, depth > 0)
                 box_width = display_width(panel[0])
                 if depth:
@@ -1308,8 +1333,15 @@ def clip(text, width):
 
 def menu_panel(items, heading, index, width, height, submenu=False):
     # Return one bounded dropdown and its first visible item for scrolling/highlighting.
-    labels = [item["label"] + (" >" if "items" in item else "") for item in items]
-    box_width = min(width, max(26, min(68, max([display_width(heading)] + [display_width(label) for label in labels]) + 4)))
+    labels = [(f"{item['key']}: " if item.get("key") else "") + item["label"]
+              + (" >" if "items" in item else "") for item in items]
+    count = len(items)
+    footer = f" {count} {'item' if count == 1 else 'items'} | Esc: {'back' if submenu else 'close'}"
+    if any(item.get("key", "").isalpha() for item in items):
+        footer += " | Tab: letters"
+    content_width = max(display_width(heading) + 4, display_width(footer) + 3,
+                        *(display_width(label) + 4 for label in labels))
+    box_width = min(width, max(26, min(68, content_width)))
     room = min(max(1, len(items)), max(1, height - 9))
     first = max(0, index - room + 1)
 
@@ -1326,5 +1358,5 @@ def menu_panel(items, heading, index, width, height, submenu=False):
             panel.append(row(marker + labels[item_index]))
         else:
             panel.append(row("  (no matching items)"))
-    panel += [row(f" {len(items)} items | Esc: {'back' if submenu else 'close'}"), border]
+    panel += [row(footer), border]
     return panel, first
