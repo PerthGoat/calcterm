@@ -14,7 +14,8 @@ from .engine import Calculator, EQUATION_NAMES, HistoryEntry
 from .forth import ForthInterpreter
 from .graph import GraphView, validate_graph_settings
 from .menus import (categorize_unit_items, command_item, default_menus, display_options,
-                    output_options, problem_menu, symbol_menu_items, upgrade_math_menu, validate_menus)
+                    output_options, problem_menu, symbol_menu_items, upgrade_constants_menu,
+                    upgrade_math_menu, validate_menus)
 
 
 def write_json(path, data):
@@ -331,6 +332,7 @@ class SessionStorage(ABC):
                 upgrade_math_menu(menus[0])
                 if not any("items" in item for item in menus[1]["items"]):
                     menus[1]["items"] = categorize_unit_items(calculator.registry, menus[1]["items"])
+                upgrade_constants_menu(menus)
                 symbols = symbol_menu_items()
                 legacy_symbols = [item for item in symbols if item["insert"] != "√"]
                 if menus[3] == {"label": "Symbols", "items": legacy_symbols}:

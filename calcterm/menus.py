@@ -33,21 +33,28 @@ def math_item_kind(entry):
     return entry["kind"]
 
 
-def math_menu():
-    def build(entry):
-        key = {"key": entry["key"]}
-        if "items" in entry:
-            return {**key, "label": entry["name"], "items": [build(item) for item in entry["items"]]}
-        token = entry["function"]
-        if math_item_kind(entry) == "command" and entry["syntax"] != token:
-            token += " "
-        elif token in ("and", "or", "xor", "∠"):
-            token = f" {token} "
-        elif token == "not":
-            token += " "
-        return {**key, **insert_item(entry["function"], token)}
+def _build_math_item(entry):
+    key = {"key": entry["key"]}
+    if "items" in entry:
+        return {**key, "label": entry["name"], "items": [_build_math_item(item) for item in entry["items"]]}
+    token = entry["function"]
+    if math_item_kind(entry) == "command" and entry["syntax"] != token:
+        token += " "
+    elif token in ("and", "or", "xor", "∠"):
+        token = f" {token} "
+    elif token == "not":
+        token += " "
+    return {**key, **insert_item(entry["function"], token)}
 
-    return {"label": "Math", "items": [build(entry) for entry in MATH_MENU]}
+
+def math_menu():
+    return {"label": "Math", "items": [_build_math_item(entry) for entry in MATH_MENU]}
+
+
+def algebra_menu():
+    # example_files/algebra_menu.yaml uses the same entries as Math > 9: Algebra.
+    reference = next(entry for entry in MATH_MENU if entry["name"] == "Algebra")
+    return {"label": reference["name"], "items": [_build_math_item(entry) for entry in reference["items"]]}
 
 
 def upgrade_math_menu(menu):
@@ -57,6 +64,23 @@ def upgrade_math_menu(menu):
     legacy += [insert_item("pi", "π"), insert_item("Assign ->", "->"), insert_item("Convert =>", "=>")]
     if menu["label"] == "Math" and menu["items"][:len(legacy)] == legacy:
         menu["items"] = math_menu()["items"] + menu["items"][len(legacy):]
+
+
+def upgrade_constants_menu(menus):
+    """Move the former F3 menu into F2, keeping any saved entries."""
+    units, constants = menus[1:3]
+    if constants["label"] != "Constants":
+        return
+    unit_items = units["items"]
+    existing = next((item for item in unit_items if item["label"] == "Constants" and "items" in item), None)
+    if existing is not None:
+        unit_items.remove(existing)
+        for item in constants["items"]:
+            if item not in existing["items"]:
+                existing["items"].append(item)
+        constants = existing
+    unit_items.insert(0, constants)
+    menus[2] = algebra_menu()
 
 
 def symbol_menu_items():
@@ -175,12 +199,14 @@ def catalog_items(calculator, menus):
 def default_menus(registry):
     # Build F1-F6 from the current registry, including any loaded custom units.
     units = sorted((u for u in registry.units.values() if not u.constant), key=lambda u: (u.category, u.name))
-    constants = [u for u in registry.units.values() if u.constant]
+    constants = {"label": "Constants", "items": [insert_item(f"{u.notation} {u.label}", u.notation)
+                                                for u in registry.units.values() if u.constant]}
     return [
         math_menu(),
-        {"label": "Units", "items": categorize_unit_items(registry, [insert_item(f"{u.notation} {u.label}", u.notation) for u in units])
-         + [insert_item("Define a unit", ":unit smoot = 1.7018_m")]},
-        {"label": "Constants", "items": [insert_item(u.notation + " " + u.label, u.notation) for u in constants]},
+        {"label": "Units", "items": [constants, *categorize_unit_items(registry, [
+            insert_item(f"{u.notation} {u.label}", u.notation) for u in units]),
+            insert_item("Define a unit", ":unit smoot = 1.7018_m")]},
+        algebra_menu(),
         {"label": "Symbols", "items": symbol_menu_items()},
         {"label": "Options", "items": [command_item("Radian mode", ":mode radian"), command_item("Degree mode", ":mode degree"),
          *output_options(),
@@ -261,7 +287,8 @@ HELP_LINES = [
     "In IO output focus: Home/End: first/latest output; F10/Esc: return to calculator.",
     "F6 > Catalog: all functions/symbols; type to filter; Enter inserts; Esc closes.",
     "Type in a menu to filter; Backspace removes a filter character.",
-    "Math quick-select: press the listed digit, or Tab then the listed letter, with an empty filter.",
+    "Math and Algebra: press the listed digit, or Tab then the listed letter, with an empty filter.",
+    "F2 Units: open the first item, Constants, to insert a physical constant.",
     "Submenus: Enter/Right opens; Right on a leaf switches menus; Left/Esc goes back.",
     "3->x assigns x; x/X differ; _ft/_FT are the same unit.",
     "Comparisons: < > <= >= = == != return True or False; 3>6 is False.",

@@ -1186,7 +1186,11 @@ class ConsoleTests(unittest.TestCase):
 
     def test_units_menu_categories_contain_all_units(self):
         self.app.handle_key("F2")
+        self.assertEqual(self.app.menu_items()[0]["label"], "Constants")
         categories = {item["label"]: item["items"] for item in self.app.menu_items() if "items" in item}
+        constants = categories.pop("Constants")
+        self.assertEqual({item["insert"] for item in constants},
+                         {unit.notation for unit in self.app.calculator.registry.units.values() if unit.constant})
         units = [unit for unit in self.app.calculator.registry.units.values() if not unit.constant]
         self.assertEqual(set(categories), {unit.category for unit in units})
         for category, items in categories.items():
@@ -1194,8 +1198,11 @@ class ConsoleTests(unittest.TestCase):
                 self.assertEqual({item["insert"] for item in items},
                                  {unit.notation for unit in units if unit.category == category})
         self.assertEqual(self.app.menu_items()[-1]["label"], "Define a unit")
-        self.app.handle_key("F3")
-        self.assertTrue(all("insert" in item for item in self.app.menu_items()))
+        self.app.handle_key("ENTER")
+        self.assertEqual(self.app.menu_items(), constants)
+        self.type_keys("speed of light")
+        self.app.handle_key("ENTER")
+        self.assertEqual(self.app.text, "_c")
 
     def test_category_opens_with_right_and_inserts_at_cursor(self):
         self.app.text, self.app.cursor = "()+1", 1
@@ -1212,7 +1219,7 @@ class ConsoleTests(unittest.TestCase):
         self.assertIsNone(self.app.open_menu)
         self.assertFalse(self.app.menu_stack)
 
-    def test_right_from_unit_submenu_switches_to_constants(self):
+    def test_right_from_unit_submenu_switches_to_algebra(self):
         self.app.text, self.app.cursor = "()+1", 1
         for unit_filter in ("foot", "xxxxx"):
             with self.subTest(unit_filter=unit_filter):
@@ -1227,6 +1234,7 @@ class ConsoleTests(unittest.TestCase):
                 self.assertFalse(self.app.menu_stack)
                 self.assertEqual(self.app.menu_filter, "")
                 self.assertEqual(self.app.menu_index, 0)
+                self.assertEqual(self.app.menu_root()["label"], "Algebra")
                 self.assertEqual(self.app.menu_items(), self.app.menus[2]["items"])
                 self.assertEqual(self.app.text, "()+1")
                 self.assertEqual(self.app.cursor, 1)

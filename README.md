@@ -65,7 +65,7 @@ the entry script.
 
 | Key | Action |
 | --- | --- |
-| F1–F6 | Open/close Math, Units, Constants, Symbols, Options, and Help menus |
+| F1–F6 | Open/close Math, Units, Algebra, Symbols, Options, and Help menus |
 | F7 | Open the equation editor, or save the current equation and close it |
 | F8 | Open/close the table of checked equations |
 | F9 | Open/close Clean Up: clear variables/history or reset configuration |
@@ -138,12 +138,12 @@ press and is also shown in the equation editor and table. Other platforms keep i
 hidden because ordinary terminal input does not reliably report bare Shift releases.
 
 In a dropdown, use Up/Down and Enter to choose an item. Type to filter its labels;
-Backspace edits the filter. In **F1 Math**, press a listed digit to select it directly.
+Backspace edits the filter. In **F1 Math** and **F3 Algebra**, press a listed digit to select it directly.
 For a letter shortcut, press Tab and then the letter. Quick-select applies to the
 open submenu when its filter is empty. In F2, choose a unit category with Enter or Right, then
 choose its unit with Enter. Left or Esc returns to the category list; Esc again
 closes it. Filtering the category list also searches the units inside each category.
-Right on a unit switches to F3 Constants, clearing the submenu and filter; this
+Right on a unit switches to F3 Algebra, clearing the submenu and filter; this
 also works when the submenu filter has no matches. In any menu, Right opens a
 selected submenu when available, or otherwise switches to the next top menu.
 In dropdown menus and submenus, Up wraps from the first item to the last, and Down wraps from the last to the first.
@@ -153,8 +153,10 @@ arrows. Selection inserts the symbol at the input cursor. Terminal size must be 
 least 40 columns by 12 rows.
 
 F1 Math is built into the Python package and includes the Matrix, Statistics, and
-Algebra submenus. The [YAML example](example_files/math_menu.yaml) documents its
-layout and syntax. Selecting a function or command inserts
+Algebra submenus. F3 opens the same Algebra functions directly, including the
+Trig, Complex, and Extract submenus. The [Math reference](example_files/math_menu.yaml)
+and [Algebra reference](example_files/algebra_menu.yaml) document their layouts and syntax.
+Selecting a function or command inserts
 its syntax at the cursor. For example, `det([[1,2],[3,4]])` uses a matrix of rows,
 `sin(90°)` supplies explicit angle units, and `LinReg [1,2,3],[3,5,7]` fits a line.
 `ShowStat` opens the latest statistics or regression summary in the scrollable IO
@@ -468,7 +470,8 @@ Every unit and constant requested is included, across length, area, volume, time
 velocity, temperature, mass, force, energy, power, pressure, viscosity, frequency,
 current, charge, potential, resistance, conductance, capacitance, magnetic fields,
 flux, inductance, luminous intensity, and amount of substance. F2 lists units by
-category, each opening a submenu of its units; F3 lists constants. User-defined
+category, each opening a submenu of its units. Physical constants are in the first
+F2 submenu, **Constants**. User-defined
 units appear in the Custom submenu. `_mps2` supplies acceleration, and compound units work:
 
 ```text
@@ -664,8 +667,9 @@ Problems and history have their own separate files.
 
 You can also edit the JSON file. It needs exactly six menus; each item needs a label
 and exactly one of `insert`, `command`, or an `items` list for a submenu. Submenus
-can nest up to eight levels. Older flat F2 unit lists are grouped by category when
-loaded, preserving other actions. For example:
+can nest up to eight levels. When loading older configurations, flat F2 unit lists
+are grouped by category and the former F3 Constants menu moves to the top of F2.
+For example:
 
 ```json
 {
@@ -677,8 +681,11 @@ loaded, preserving other actions. For example:
   "units": {"smoot": "1.7018_m"},
   "menus": [
     {"label": "Favorites", "items": [{"label": "Square", "insert": "^2"}]},
-    {"label": "Units", "items": [{"label": "Length", "items": [{"label": "Feet", "insert": "_ft"}]}]},
-    {"label": "Constants", "items": [{"label": "Light speed", "insert": "_c"}]},
+    {"label": "Units", "items": [
+      {"label": "Constants", "items": [{"label": "Light speed", "insert": "_c"}]},
+      {"label": "Length", "items": [{"label": "Feet", "insert": "_ft"}]}
+    ]},
+    {"label": "Algebra", "items": [{"key": "1", "label": "solve(", "insert": "solve("}]},
     {"label": "Symbols", "items": [{"label": "Epsilon", "insert": "ε"}]},
     {"label": "Options", "items": [{"label": "Degrees", "command": ":mode degree"}]},
     {"label": "Help", "items": [{"label": "Keyboard", "command": ":help"}]}

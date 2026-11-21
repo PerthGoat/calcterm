@@ -12,6 +12,27 @@ from calcterm.menus import math_item_kind, validate_menus
 
 
 class MathMenuTests(unittest.TestCase):
+    def test_f3_algebra_shares_the_math_layout_and_evaluates_nested_selections(self):
+        with tempfile.TemporaryDirectory() as folder:
+            app = ConsoleApp(config_path=Path(folder) / "settings.json")
+            math_algebra = next(item for item in app.menus[0]["items"] if item["key"] == "9")
+            self.assertEqual(app.menus[2], {"label": "Algebra", "items": math_algebra["items"]})
+            self.assertIsNot(app.menus[2]["items"], math_algebra["items"])
+            for keys, token, arguments, expected in (
+                (("1",), "solve(", "x^2=4,x)", "[-2, 2]"),
+                (("9", "1"), "tExpand(", "sin(2*x))", "2*sin(x)*cos(x)"),
+                (("TAB", "a", "1"), "cSolve(", "x^2+1=0,x)", "[-I, I]"),
+                (("TAB", "b", "2"), "getDenom(", "1/x+1/2)", "2*x"),
+            ):
+                with self.subTest(token=token):
+                    app.clear_input()
+                    for key in ("F3", *keys):
+                        app.handle_key(key)
+                    self.assertEqual(app.text, token)
+                    app.insert(arguments)
+                    app.handle_key("ENTER")
+                    self.assertEqual(app.calculator.history[-1].result, expected)
+
     def test_reference_paths_survive_configuration_validation(self):
         with tempfile.TemporaryDirectory() as folder:
             app = ConsoleApp(config_path=Path(folder) / "settings.json")

@@ -29,6 +29,27 @@ class ConfigurationTests(unittest.TestCase):
                           restored.calculator.precision, restored.history_insert, restored.syntax_colors),
                          ("degree", "approximate", 12, "expression", False))
 
+    def test_legacy_constants_menu_moves_to_the_top_of_units_on_load(self):
+        menus = self.app.menus
+        algebra = menus[2]
+        constants = menus[1]["items"].pop(0)
+        favorite = {"label": "Light speed", "insert": "_c"}
+        constants["items"].append(favorite)
+        menus[1]["items"].append({"label": "Constants", "items": [favorite]})
+        menus[2] = constants
+        document = json.dumps({"menus": menus})
+        self.config.write_text(document, encoding="utf-8")
+
+        restored = ConsoleApp(config_path=self.config)
+        unit_items = restored.menus[1]["items"]
+        self.assertEqual(unit_items[0], {"label": "Constants", "items": [favorite, *constants["items"][:-1]]})
+        self.assertEqual(unit_items[1:], menus[1]["items"][:-1])
+        self.assertEqual(restored.menus[2], algebra)
+        self.assertEqual(self.config.read_text(encoding="utf-8"), document)
+
+        restored.save_config()
+        self.assertEqual(ConsoleApp(config_path=self.config).menus, restored.menus)
+
     def test_invalid_changes_do_not_replace_configuration(self):
         self.app.command(":mode degree")
         before = self.config.read_bytes()
